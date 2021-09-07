@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="4bc6333b-0b0e-4930-93f1-1eedb58382b0" name="g2g">
+        <fileTransfer rootFolder="/users7/zllei" accessType="SFTP" host="10.160.3.60" port="443" sshConfigId="b257a3ef-d19f-424f-b8b2-13aa87d24d72" sshConfig="zllei@10.160.3.60:443 key" keyPair="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
