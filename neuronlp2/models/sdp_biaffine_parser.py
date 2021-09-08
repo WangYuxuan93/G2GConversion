@@ -67,7 +67,7 @@ class SDPBiaffineParser(nn.Module):
 				 embedd_word=None, embedd_char=None, embedd_pos=None,
 				 use_pretrained_static=True, use_random_static=False,
 				 use_elmo=False, elmo_path=None, 
-				 pretrained_lm='none', lm_path=None, lm_config=None,num_src_labels=52,
+				 pretrained_lm='none', lm_path=None, lm_config=None, num_src_labels=52,
 				 num_lans=1, log_name='Network'):
 		super(SDPBiaffineParser, self).__init__()
 		self.hyps = hyps
@@ -132,8 +132,8 @@ class SDPBiaffineParser(nn.Module):
 			logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
 			logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
 			lm_hidden_size = self.lm_encoder.config.hidden_size
-		# assert lm_hidden_size == word_dim
-		# lm_hidden_size = 768
+			#assert lm_hidden_size == word_dim
+			#lm_hidden_size = 768
 		else:
 			self.lm_encoder = None
 			lm_hidden_size = 0
@@ -586,8 +586,6 @@ class SDPBiaffineParser(nn.Module):
 		root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
 		# (batch, seq_len, seq_len)
 		mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
-
-
 
 		# (batch, seq_len, embed_size)
 		embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 

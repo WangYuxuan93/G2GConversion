@@ -26,8 +26,10 @@ import random
 from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, ud_data  # , iterate_data
+from neuronlp2.io import get_logger, conllx_data, ud_data
+from neuronlp2.io.g2g.batcher import iterate_data_g2g
 from neuronlp2.io import ud_stacked_data, conllx_stacked_data
+from neuronlp2.io.g2g import conllu_data
 from neuronlp2.models.sdp_biaffine_parser import SDPBiaffineParser
 # from neuronlp2.models.ensemble_parser import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
@@ -266,7 +268,10 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
-        iterate = iterate_data
+        if pretrained_lm == "sroberta":
+            iterate = iterate_data_g2g
+        else:
+            iterate = iterate_data
         lan_id = None
 
     if ensemble:
@@ -523,7 +528,7 @@ def train(args):
     elif data_format == "ud":
         # data_paths=dev_path + test_path
         data_paths = dev_path
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
                                                                                             max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
                                                                                             expand_with_pretrained=(only_pretrain_static), task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
@@ -557,7 +562,7 @@ def train(args):
         else:
             table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
             items = pretrained_alphabet.items()
-        table[data_reader.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
+        table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
         for word, index in items:
             if word in word_dict:
@@ -686,16 +691,29 @@ def train(args):
         n += 1
     print("num params = ", n)
     logger.info("Reading Data")
+
     if alg == 'graph':
-        data_train = data_reader.read_bucketed_data_sdp(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+        if pretrained_lm=="sroberta":
+
+            data_train = conllu_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            data_dev = conllu_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                              pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        else:
+            data_train = data_reader.read_bucketed_data_sdp(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+            data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                 pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         if test_path == "none":
             data_test = None
         else:
-            data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            if pretrained_lm=="sroberta":
+                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+
+            else:
+                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                      pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     elif alg == 'transition':
         prior_order = hyps['input']['prior_order']
         data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
@@ -781,7 +799,11 @@ def train(args):
         iterate = multi_language_iterate_data
         multi_lan_iter = True
     else:
-        iterate = iterate_data
+        if pretrained_lm =="sroberta":
+
+            iterate = iterate_data_g2g
+        else:
+            iterate = iterate_data
         multi_lan_iter = False
         lan_id = None
     for epoch in range(1, num_epochs + 1):
@@ -830,6 +852,7 @@ def train(args):
             else:
                 input_elmo = None
             if pretrained_lm == "sroberta":
+
                 _src_heads = data['SRC_HEAD']
                 _src_types = data['SRC_TYPE']
                 bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
@@ -1137,7 +1160,7 @@ def parse(args):
             logger.info("Creating Alphabets-%d" % i)
             alphabet_path = os.path.join(model_path, 'alphabets')
             assert os.path.exists(alphabet_path)
-            word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+            word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = conllx_data.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
                                                                                                                     log_name="Create Alphabets-%d" % i, task_type="sdp")
             pretrained_alphabets[i] = utils.create_alphabet_from_embedding(alphabet_path)
             if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
@@ -1256,8 +1279,13 @@ def parse(args):
         data_tests = [None] * n
         for i in range(n):
             if alg == 'graph':
-                data_tests[i] = data_reader.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i], normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                      pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx)
+                if pretrained_lm =="sroberta":
+                    data_tests[i] = conllu_data.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i], normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                          pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx)
+                else:
+                    data_tests[i] = data_reader.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i], normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                          pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx)
+
             elif alg == 'transition':
                 prior_order = hyps['input']['prior_order']
                 if data_format == "conllx":
@@ -1270,8 +1298,13 @@ def parse(args):
         data_test = data_tests
     else:
         if alg == 'graph':
-            data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            if pretrained_lm =="sroberta":
+                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                      pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+            else:
+                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+
         elif alg == 'transition':
             prior_order = hyps['input']['prior_order']
             if data_format == "conllx":
@@ -1299,7 +1332,7 @@ def parse(args):
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, args.beam, batch_size=args.eval_batch_size, tokenizer=tokenizer,
-             multi_lan_iter=multi_lan_iter, ensemble=False, target_mask=target_type_mask)
+             multi_lan_iter=multi_lan_iter, ensemble=False,target_mask=target_type_mask)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()  # gold_writer.close()
@@ -1345,7 +1378,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--char_path', help='path for character embedding dict')
     args_parser.add_argument('--use_elmo', action='store_true', default=False, help='Use elmo as input?')
     args_parser.add_argument('--elmo_path', default=None, help='path for pretrained elmo')
-    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'],
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'bart', 'roberta','sroberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'],
                              help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--lm_config', help='path for pretrained language model config')
