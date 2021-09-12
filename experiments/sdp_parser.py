@@ -488,6 +488,10 @@ def train(args):
 
     model_path = args.model_path
     model_name = os.path.join(model_path, 'model.pt')
+    if args.pre_model_path !="none":
+        pre_model_name = os.path.join(args.pre_model_path,'model.pt')
+    else:
+        pre_model_name = args.pre_model_path
     roberta_path = os.path.join(model_path, 'roberta.pt')
     pretrain = args.pretrain_network_path
     punctuation = args.punctuation
@@ -630,9 +634,15 @@ def train(args):
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if model_type == 'Biaffine':
-        network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
-                                    use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans)
+        if args.model_transfer =="linear":
+            network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
+                                        use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
+                                        lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,method=args.model_transfer,old_label=46)
+        else:
+            network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
+                                        use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
+                                        lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans)
+
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -678,13 +688,18 @@ def train(args):
         optim_parameters = single_network.parameters()
     optimizer, scheduler = get_optimizer(optim_parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps, schedule, hidden_size, decay_steps)
     # print ("parameters: {} \n".format(len(network.parameters())))
-    if os.path.exists(model_name):
+    if os.path.exists(pre_model_name):
         logger.info("*********** 继续训练继续训练 *******************")
         logger.info("*********** 继续训练继续训练 *******************")
         logger.info("*********** 继续训练继续训练 *******************")
-        pre_dict = torch.load(model_name, map_location=device)
-        network.load_state_dict(pre_dict['state_dict'])
-        optimizer.load_state_dict(pre_dict['optimizer'])
+        if pre_model_name !="none":
+            new_dict = network.state_dict()
+            pre_dict = torch.load(pre_model_name, map_location=device)
+            update_new_dict = {k:v for k,v in pre_dict.items() if k in new_dict}
+            new_dict.update(update_new_dict)
+            network.load_state_dict(new_dict)
+
+            # optimizer.load_state_dict(pre_dict['optimizer'])
 
     n = 0
     for para in network.parameters():
@@ -1394,6 +1409,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--plus', default='none', help='path for alphabet.')
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
+    args_parser.add_argument('--pre_model_path', help='path for loading model trained before.')
     args_parser.add_argument('--pretrain_network_path')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
@@ -1404,6 +1420,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--tol_epoch', type=int, default=0)
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
+    args_parser.add_argument('--model_transfer', type=str, choices=["linear","none"],default='none')
     args = args_parser.parse_args()
 
     if args.mode == 'train':

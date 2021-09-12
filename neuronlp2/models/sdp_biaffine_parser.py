@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
-from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
+from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2,BiAffine_transfer
 from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, GraphAttentionNetwork
 from neuronlp2.nn.dropout import drop_input_independent
@@ -68,7 +68,7 @@ class SDPBiaffineParser(nn.Module):
 				 use_pretrained_static=True, use_random_static=False,
 				 use_elmo=False, elmo_path=None, 
 				 pretrained_lm='none', lm_path=None, lm_config=None, num_src_labels=52,
-				 num_lans=1, log_name='Network'):
+				 num_lans=1, log_name='Network',method="none",old_label=1):
 		super(SDPBiaffineParser, self).__init__()
 		self.hyps = hyps
 		self.device = device
@@ -102,6 +102,7 @@ class SDPBiaffineParser(nn.Module):
 		self.lan_emb_as_input = False
 		lan_emb_size = hyps['input_encoder']['lan_emb_size']
 		#self.end_word_id = end_word_id
+
 
 		logger = get_logger(log_name)
 		model = "{}-{}".format(hyps['model'], input_encoder_name)
@@ -261,6 +262,18 @@ class SDPBiaffineParser(nn.Module):
 			self.input_encoder = None
 			self.enc_out_dim = enc_dim
 
+		# Jeffrey
+		# self.num_src_labels = num_src_labels
+		self.method = method
+		self.old_label = old_label
+		# if self.method == "method1":
+		# 	self.rel_source = nn.Embedding(self.num_src_labels, self.rel_mlp_dim)
+		# 	self.yes_no_label = nn.Embedding(2, self.rel_mlp_dim)
+		# 	self.basic_parameters.append(self.rel_source)
+		# 	self.basic_parameters.append(self.yes_no_label)
+		# 	self.reset_parameters_add()
+		# ==================================
+
 		# for biaffine scorer
 		self.init_biaffine()
 		logger.info("##### Biaffine #####")
@@ -278,6 +291,7 @@ class SDPBiaffineParser(nn.Module):
 			self.activation = None
 		self.criterion_arc = nn.BCELoss(reduction='none')
 		self.criterion_label = nn.CrossEntropyLoss(reduction='none')
+
 		self.reset_parameters(embedd_word, embedd_char, embedd_pos)
 		logger.info('# of Parameters: %d' % (sum([param.numel() for param in self.parameters()])))
 
@@ -290,7 +304,10 @@ class SDPBiaffineParser(nn.Module):
 			self.arc_h = nn.Linear(hid_size, self.arc_mlp_dim)
 			self.arc_c = nn.Linear(hid_size, self.arc_mlp_dim)
 			#self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
-			self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
+			if self.method == "linear":
+				self.arc_attention = BiAffine_transfer(self.arc_mlp_dim,bias_x=True,bias_y=False)
+			else:
+				self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
 			self.basic_parameters.append(self.arc_h)
 			self.basic_parameters.append(self.arc_c)
 			self.basic_parameters.append(self.arc_attention)
@@ -302,10 +319,20 @@ class SDPBiaffineParser(nn.Module):
 			self.rel_h = nn.Linear(hid_size, self.rel_mlp_dim)
 			self.rel_c = nn.Linear(hid_size, self.rel_mlp_dim)
 			#self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
-			self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+			if self.method =="linear":
+				self.rel_attention = BiAffine_transfer(self.rel_mlp_dim,n_out_old=self.old_label,n_out_new=self.num_labels,bias_x=True,bias_y=True)
+			else:
+				self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+			# Jeffrey-2021.9.9: 加入 source label的embedding
+
 			self.basic_parameters.append(self.rel_h)
 			self.basic_parameters.append(self.rel_c)
 			self.basic_parameters.append(self.rel_attention)
+		# if self.method =="method1":
+		# 	self.label_w = nn.Linear(self.rel_mlp_dim,1)
+		# 	self.yes_no_w = nn.Linear(self.rel_mlp_dim,1)
+		# 	self.basic_parameters.append(self.label_w)
+		# 	self.basic_parameters.append(self.yes_no_w)
 
 	def _basic_parameters(self):
 		params = [p.parameters() for p in self.basic_parameters]
@@ -320,6 +347,18 @@ class SDPBiaffineParser(nn.Module):
 		else:
 			params = [p.parameters() for p in self.lm_parameters]
 			return itertools.chain(*params)
+
+	def reset_parameters_add(self):
+		"""
+
+		:param self:
+		:param embed: 初始化要添加的ebedding
+		:return:
+		"""
+		nn.init.uniform_(self.rel_source.weight,-0.1,0.1)
+		nn.init.uniform_(self.yes_no_label.weight,-0.1,0.1)
+		nn.init.xavier_uniform_(self.rel_source.weight)
+		nn.init.xavier_uniform_(self.yes_no_label.weight)
 
 	def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
 		if embedd_char is None and self.char_embed is not None:
