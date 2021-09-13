@@ -636,15 +636,7 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, seq_len, seq_len)
 		arc_logits = self.arc_attention(arc_c, arc_h)
 		# arc_attention1 jeffrey 2021-9-12
-		self.logger.info("origin_heads' size is:")
-		self.logger.info(origin_heads.shape)
-		self.logger.info("origin_types' size is:")
-		self.logger.info(origin_types.shape)
 		arc_embedding = self.arc_ebbed((origin_heads>0).type(torch.long))
-		self.logger.info("arc_arc_embedding")
-		self.logger.info(arc_embedding.shape)
-		self.logger.info("arc_c")
-		self.logger.info(torch.unsqueeze(arc_c,-1).shape)
 		arc_logits1 = arc_embedding @ torch.unsqueeze(arc_c,-1)
 
 		#print ('graph_matrix:\n', graph_matrix)
@@ -657,9 +649,6 @@ class SDPBiaffineParser(nn.Module):
 		# rel_attention1 jeffrey 2021-9-12
 
 		rel_embedding = self.labels_ebbed(origin_types)
-		self.logger.info(rel_embedding.shape)
-		# new_rel_c = torch.gather(rel_embedding,dim=1,index=origin_types)
-		# self.logger.info(new_rel_c.shape)
 		rel_logits1 = rel_embedding @ torch.unsqueeze(rel_c,-1)
 		# self.logger.info(rel_logits.shape)
 		# self.logger.info(rel_logits1.shape)

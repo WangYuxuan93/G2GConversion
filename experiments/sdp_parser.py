@@ -861,9 +861,6 @@ def train(args):
 
                 _src_heads = data['SRC_HEAD']
                 _src_types = data['SRC_TYPE']
-                print("zhilin:checking base1")
-                print(_src_heads.shape)
-                print(heads.shape)
                 bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
                 bpes = bpes.to(device)
                 first_idx = first_idx.to(device)
