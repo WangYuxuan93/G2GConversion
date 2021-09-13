@@ -533,17 +533,24 @@ def train(args):
                                                                                             expand_with_pretrained=(only_pretrain_static), task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
+    if args.use_old_labels:
+        _, _, _, old_rel_alphabet = conllx_data.create_alphabets(args.old_alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
+                                                                                                max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+                                                                                                expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+
     num_words = word_alphabet.size()
     num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_rels = rel_alphabet.size()
+    num_old_rels = old_rel_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Rel Alphabet Size: %d" % num_rels)
+    logger.info("old Rel Alphabet Size: %d" % num_old_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -632,7 +639,7 @@ def train(args):
     if model_type == 'Biaffine':
         network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
                                     use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans)
+                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,num_src_labels=num_old_rels)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -696,7 +703,7 @@ def train(args):
         if pretrained_lm=="sroberta":
 
             data_train = conllu_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=old_rel_alphabet)
             data_dev = conllu_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                              pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         else:
@@ -800,7 +807,6 @@ def train(args):
         multi_lan_iter = True
     else:
         if pretrained_lm =="sroberta":
-
             iterate = iterate_data_g2g
         else:
             iterate = iterate_data
@@ -855,11 +861,16 @@ def train(args):
 
                 _src_heads = data['SRC_HEAD']
                 _src_types = data['SRC_TYPE']
+                print("zhilin:checking base1")
+                print(_src_heads.shape)
+                print(heads.shape)
                 bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
                 bpes = bpes.to(device)
                 first_idx = first_idx.to(device)
                 src_heads = src_heads.to(device)
                 src_types = src_types.to(device)
+                _src_types = _src_types.to(device)
+                _src_heads = _src_heads.to(device)
                 try:
                     assert first_idx.size() == words.size()
                 except:
@@ -888,7 +899,8 @@ def train(args):
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
                 losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
-                                             src_heads=src_heads, src_types=src_types)
+                                             src_heads=src_heads, src_types=src_types,
+                                             origin_heads=_src_heads,origin_types=_src_types)
             else:
                 pres = None
                 masks_enc = data['MASK_ENC'].to(device)
@@ -1259,7 +1271,8 @@ def parse(args):
     else:
         if model_type == 'Biaffine':
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                                        use_pretrained_static=args.use_pretrained_static, use_random_static=args.use_random_static, use_elmo=args.use_elmo, elmo_path=args.elmo_path, num_lans=num_lans)
+                                        use_pretrained_static=args.use_pretrained_static, use_random_static=args.use_random_static,
+                                        use_elmo=args.use_elmo, elmo_path=args.elmo_path, num_lans=num_lans)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -1299,10 +1312,10 @@ def parse(args):
     else:
         if alg == 'graph':
             if pretrained_lm =="sroberta":
-                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                       pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
             else:
-                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
 
         elif alg == 'transition':
@@ -1404,7 +1417,12 @@ if __name__ == '__main__':
     args_parser.add_argument('--tol_epoch', type=int, default=0)
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
+    # feature2
+    args_parser.add_argument('--use_old_labels', action='store_true', default=False)
+    args_parser.add_argument('--old_alphabet_path', type=str,default='none')
+
     args = args_parser.parse_args()
+
 
     if args.mode == 'train':
         train(args)

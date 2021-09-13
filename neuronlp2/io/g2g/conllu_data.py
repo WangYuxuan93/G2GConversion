@@ -23,7 +23,7 @@ _buckets = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 140]
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<
 def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
                        pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
-                       mask_out_root=False, pos_idx=4):
+                       mask_out_root=False, pos_idx=4,old_labels=None):
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
     print('Reading data from %s' % source_path)
@@ -31,7 +31,7 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
     src_words = [[] for _ in _buckets]
 
     reader = CoNLLUReaderG2G(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet,
-                             pre_alphabet=pre_alphabet, pos_idx=pos_idx)
+                             pre_alphabet=pre_alphabet, pos_idx=pos_idx,old_labels=old_labels)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end) # Jeffrey: sentence will be transformed to a instance
     while inst is not None and (not max_size or counter < max_size):
         counter += 1

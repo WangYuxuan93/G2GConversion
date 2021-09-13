@@ -1,7 +1,7 @@
 __author__ = 'max'
 
 from neuronlp2.io.instance import Sentence
-from neuronlp2.io.common import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE
+from neuronlp2.io.common import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE,PAD_TYPE,PAD
 from neuronlp2.io.common import DIGIT_RE, MAX_CHAR_LENGTH
 from neuronlp2.mappings.ud_mapping import ud_v2_en_label_mapping
 import re
@@ -24,13 +24,15 @@ class G2GInstance(object):
 
 
 class CoNLLUReaderG2G(object):
-    def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=None, pos_idx=4):
+    def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=None, pos_idx=4,
+                 old_labels=None):
         self.__source_file = open(file_path, 'r')
         self.__word_alphabet = word_alphabet
         self.__char_alphabet = char_alphabet
         self.__pos_alphabet = pos_alphabet
         self.__type_alphabet = type_alphabet
         self.__pre_alphabet = pre_alphabet
+        self.__old_alphabet = old_labels
         self.pos_idx = pos_idx
 
     def close(self):
@@ -130,7 +132,7 @@ class CoNLLUReaderG2G(object):
                     temp_type = self.__type_alphabet.get_index(type)
                     temp.append(temp_type)
                 except:
-                    temp_type = self.__type_alphabet.get_index(ROOT_TYPE)  # Jeffrey type不存在的情况
+                    temp_type = self.__type_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
                     # temp_type = self.__type_alphabet.next_index
                     # self.__type_alphabet.next_index +=1
                     print("【ERROR arc_type:%s】"%type)
@@ -148,17 +150,28 @@ class CoNLLUReaderG2G(object):
             src_heads.append(src_headlist)
             src_types.append(src_typelist)
             src_temp=[]
-            for type in src_typelist:
+            # for type in src_typelist:
+            #     try:
+            #         temp_type = ud_v2_en_label_mapping[type]
+            #         src_temp.append(temp_type)
+            #     except:
+            #         temp_type = ud_v2_en_label_mapping["<PAD>"]
+            #         # temp_type = self.__type_alphabet.next_index
+            #         # self.__type_alphabet.next_index +=1
+            #         print("【ERROR arc_type:%s】"%type)
+            #         src_temp.append(temp_type)
+            # src_type_ids.append(src_temp)
+            # jeffrey 2021-9-12
+            for type in src_typelist and self.__old_alphabet:
                 try:
-                    temp_type = ud_v2_en_label_mapping[type]
+                    temp_type = self.__old_alphabet.get_index(type)
                     src_temp.append(temp_type)
                 except:
-                    temp_type = ud_v2_en_label_mapping["<PAD>"]
+                    temp_type = self.__old_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
                     # temp_type = self.__type_alphabet.next_index
                     # self.__type_alphabet.next_index +=1
-                    print("【ERROR arc_type:%s】"%type)
+                    print("【ERROR arc_type:%s】" % type)
                     src_temp.append(temp_type)
-            src_type_ids.append(src_temp)
 
             # save original word in words (data['SRC']), to recover this for normalize_digits=True
             words.append(word)
