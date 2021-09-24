@@ -693,9 +693,16 @@ def train(args):
         logger.info("*********** 继续训练继续训练 *******************")
         logger.info("*********** 继续训练继续训练 *******************")
         if pre_model_name !="none":
+            update_new_dict = {}
             new_dict = network.state_dict()
             pre_dict = torch.load(pre_model_name, map_location=device)
-            update_new_dict = {k:v for k,v in pre_dict.items() if k in new_dict}
+            if len(pre_dict) == 2:
+                para_dict = pre_dict["state_dict"]
+            else:
+                para_dict = pre_dict
+            for k, v in para_dict.items():
+                if k in new_dict:
+                    update_new_dict[k] = v
             new_dict.update(update_new_dict)
             network.load_state_dict(new_dict)
 
