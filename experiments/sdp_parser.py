@@ -491,7 +491,7 @@ def train(args):
     if args.pre_model_path !="none":
         pre_model_name = os.path.join(args.pre_model_path,'model.pt')
     else:
-        pre_model_name = args.pre_model_path
+        pre_model_name = "none"
     roberta_path = os.path.join(model_path, 'roberta.pt')
     pretrain = args.pretrain_network_path
     punctuation = args.punctuation
@@ -637,7 +637,7 @@ def train(args):
         if args.model_transfer =="linear":
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
                                         use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                        lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,method=args.model_transfer,old_label=46)
+                                        lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,method=args.model_transfer,old_label=args.old_labels)
         else:
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
                                         use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
@@ -657,7 +657,14 @@ def train(args):
                 network.load_state_dict(torch.load(pretrain, map_location=device))
             except:
                 pre_dict = torch.load(pretrain, map_location=device)
-                network.load_state_dict(pre_dict['state_dict'])
+                now_dict = network.state_dict()
+                update_dict = {}
+                for k, v in pre_dict.items():
+                    if k in now_dict and k not in ["arc_attention.weight","rel_attention.weight"]:
+                        update_dict[k] = v
+                now_dict.update(update_dict)
+                network.load_state_dict(now_dict)
+                # network.load_state_dict(pre_dict['state_dict'])
             logger.info("Loading pretrained model, Starting finetune ")
         logger.info("Loading pre-trained model from: %s" % pretrain)
 
@@ -700,9 +707,26 @@ def train(args):
                 para_dict = pre_dict["state_dict"]
             else:
                 para_dict = pre_dict
+            # 第一次transfer
             for k, v in para_dict.items():
                 if k in new_dict:
                     update_new_dict[k] = v
+            # 第二次transfer:
+            # for k, v in para_dict.items():
+            #     if k == "arc_attention.weight":
+            #         arc_weight = v
+            #     elif k == "arc_attention.weight_new":
+            #         arc_weight_new = v
+            #     elif k == "rel_attention.weight":
+            #         rel_weight = v
+            #     elif k == "rel_attention.weight_new":
+            #         rel_weight_new = v
+            #     elif k in new_dict:
+            #         update_new_dict[k] = v
+            # weight1= arc_weight.transpose(-1, -3) @ arc_weight_new
+            # weight2 = rel_weight.transpose(-1, -3) @ rel_weight_new
+            # update_new_dict["arc_attention.weight"] = weight1.transpose(-1,-3)
+            # update_new_dict["rel_attention.weight"] = weight2.transpose(-1,-3)
             new_dict.update(update_new_dict)
             network.load_state_dict(new_dict)
 
@@ -1416,7 +1440,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--plus', default='none', help='path for alphabet.')
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
-    args_parser.add_argument('--pre_model_path', help='path for loading model trained before.')
+    args_parser.add_argument('--pre_model_path', help='path for loading model trained before.',default='none')
     args_parser.add_argument('--pretrain_network_path')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
@@ -1428,6 +1452,8 @@ if __name__ == '__main__':
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
     args_parser.add_argument('--model_transfer', type=str, choices=["linear","none"],default='none')
+    args_parser.add_argument('--old_labels', type=int,default=0)
+
     args = args_parser.parse_args()
 
     if args.mode == 'train':
