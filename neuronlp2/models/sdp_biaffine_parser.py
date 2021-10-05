@@ -288,10 +288,10 @@ class SDPBiaffineParser(nn.Module):
 			self.enc_out_dim = enc_dim
 
 		# jeffrey 2021-9-12
-		self.labels_ebbed = nn.Embedding(num_src_labels, self.rel_mlp_dim, padding_idx=0)
-		self.arc_ebbed = nn.Embedding(2,self.arc_mlp_dim)
+		self.labels_ebbed = nn.Embedding(num_src_labels, self.rel_mlp_dim, padding_idx=0)  # padding的时候读取的向量是第几个
+		self.pattern_ebbed = nn.Embedding(9+1,self.arc_mlp_dim,padding_idx=0)
 		self.basic_parameters.append(self.labels_ebbed)
-		self.basic_parameters.append(self.arc_ebbed)
+		self.basic_parameters.append(self.pattern_ebbed)
 
 		# for biaffine scorer
 		self.init_biaffine()
@@ -365,7 +365,7 @@ class SDPBiaffineParser(nn.Module):
 			nn.init.uniform_(self.language_embed.weight, -0.1, 0.1)
 		# 初始化embedding Jeffrey
 		nn.init.uniform_(self.labels_ebbed.weight,-0.1,0.1)
-		nn.init.uniform_(self.arc_ebbed.weight,-0.1,0.1)
+		nn.init.uniform_(self.pattern_ebbed.weight,-0.1,0.1)
 		with torch.no_grad():
 			if self.pretrained_word_embed is not None:
 				self.pretrained_word_embed.weight[self.pretrained_word_embed.padding_idx].fill_(0)
@@ -376,6 +376,7 @@ class SDPBiaffineParser(nn.Module):
 			if self.pos_embed is not None:
 				self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
 			self.labels_ebbed.weight[0].fill_(0)
+			self.pattern_ebbed.weight[0].fill_(0)
 
 		if self.arc_mlp_dim != -1 and self.rel_mlp_dim != -1:
 			if self.act_func == 'leaky_relu':
@@ -612,6 +613,11 @@ class SDPBiaffineParser(nn.Module):
 		graph_matrix.scatter_(-1, index, 1)
 		return graph_matrix.detach()
 
+	def get_neaest_par(self,heads,i,j):
+		# BFS(i)
+	    # BFS(j)
+	    # 同时求交集
+		pass
 
 	def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, 
 				bpes=None, first_idx=None, input_elmo=None, mask=None, lan_id=None,
@@ -630,14 +636,19 @@ class SDPBiaffineParser(nn.Module):
 								src_heads=src_heads, src_types=src_types)
 		# (batch, seq_len, hidden_size)
 		encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
-
+		# *********** pattern embedding **************
+		encoder_output = encoder_output.unsqueeze(2).expand(2,seq_len)
+		node_labeling = torch.mean(self.labels_ebbed(origin_types),dim=2)
+		nearest_par_labeling = None
+        distant_embedding = None
+		# ***********pattern embedding ***********
 		# (batch, seq_len, arc_mlp_dim)
 		arc_h, arc_c = self._arc_mlp(encoder_output)
 		# (batch, seq_len, seq_len)
 		arc_logits = self.arc_attention(arc_c, arc_h)
 		# arc_attention1 jeffrey 2021-9-12
-		arc_embedding = self.arc_ebbed((origin_heads>0).type(torch.long))
-		arc_logits1 = arc_embedding @ torch.unsqueeze(arc_c,-1)
+		# arc_embedding = self.arc_ebbed((origin_heads>0).type(torch.long))
+		# arc_logits1 = arc_embedding @ torch.unsqueeze(arc_c,-1)
 
 		#print ('graph_matrix:\n', graph_matrix)
 		#print ('arc_loss:', arc_losses[-1].sum())
@@ -648,13 +659,13 @@ class SDPBiaffineParser(nn.Module):
 		rel_logits = self.rel_attention(rel_c, rel_h)
 		# rel_attention1 jeffrey 2021-9-12
 
-		rel_embedding = self.labels_ebbed(origin_types)
-		rel_logits1 = rel_embedding @ torch.unsqueeze(rel_c,-1)
+		# rel_embedding = self.labels_ebbed(origin_types)
+		# rel_logits1 = rel_embedding @ torch.unsqueeze(rel_c,-1)
 		# self.logger.info(rel_logits.shape)
 		# self.logger.info(rel_logits1.shape)
 
 		# 插入计算
-		arc_logits = arc_logits + arc_logits1.squeeze(-1)+rel_logits1.squeeze(-1)
+		arc_logits = arc_logits  # + arc_logits1.squeeze(-1)+rel_logits1.squeeze(-1)
 
 		# mask invalid position to -inf for log_softmax
 		if mask is not None:
