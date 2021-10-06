@@ -528,7 +528,15 @@ def train(args):
     elif data_format == "ud":
         # data_paths=dev_path + test_path
         data_paths = dev_path
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
+
+    if pretrained_lm == "sroberta":
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_source, rel_alphabet_target = conllx_data.create_alphabets_MMoE(alphabet_path, train_path, data_paths=data_paths,
+                                                                                                                                 embedd_dict=word_dict, max_vocabulary_size=args.max_vocab_size,
+                                                                                                                                 normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+                                                                                                                                 expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+
+    else:
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
                                                                                             max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
                                                                                             expand_with_pretrained=(only_pretrain_static), task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
