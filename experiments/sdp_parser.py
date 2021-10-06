@@ -533,24 +533,20 @@ def train(args):
                                                                                             expand_with_pretrained=(only_pretrain_static), task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
-    if args.use_old_labels:
-        _, _, _, old_rel_alphabet = conllx_data.create_alphabets(args.old_alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
-                                                                                                max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
-                                                                                                expand_with_pretrained=(only_pretrain_static), task_type="sdp")
 
     num_words = word_alphabet.size()
     num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_rels = rel_alphabet.size()
-    num_old_rels = old_rel_alphabet.size()
+    # num_old_rels = old_rel_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Rel Alphabet Size: %d" % num_rels)
-    logger.info("old Rel Alphabet Size: %d" % num_old_rels)
+    # logger.info("old Rel Alphabet Size: %d" % num_old_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -639,7 +635,7 @@ def train(args):
     if model_type == 'Biaffine':
         network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
                                     use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,num_src_labels=num_old_rels)
+                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,num_src_labels=52)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -1415,8 +1411,6 @@ if __name__ == '__main__':
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
     # feature2
-    args_parser.add_argument('--use_old_labels', action='store_true', default=False)
-    args_parser.add_argument('--old_alphabet_path', type=str,default='none')
 
     args = args_parser.parse_args()
 

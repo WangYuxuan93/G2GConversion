@@ -104,6 +104,7 @@ class SDPBiaffineParser(nn.Module):
         word_dim = hyps['input']['word_dim']
         pos_dim = hyps['input']['pos_dim']
         char_dim = hyps['input']['char_dim']
+        self.pos_dim = pos_dim
         self.use_pretrained_static = use_pretrained_static
         self.use_random_static = use_random_static
         self.use_elmo = use_elmo and elmo_path is not None
@@ -320,8 +321,8 @@ class SDPBiaffineParser(nn.Module):
             self.arc_attention = BiAffine_v2(hid_size, bias_x=True, bias_y=False)
             self.basic_parameters.append(self.arc_attention)
         else:
-            self.arc_h = nn.Linear(hid_size, self.arc_mlp_dim)
-            self.arc_c = nn.Linear(hid_size, self.arc_mlp_dim)
+            self.arc_h = nn.Linear(hid_size+3*self.pos_dim, self.arc_mlp_dim)
+            self.arc_c = nn.Linear(hid_size+3*self.pos_dim, self.arc_mlp_dim)
             #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
             self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
 
@@ -333,8 +334,8 @@ class SDPBiaffineParser(nn.Module):
             self.rel_attention = BiAffine_v2(hid_size, n_out=self.num_labels, bias_x=True, bias_y=True)
             self.basic_parameters.append(self.rel_attention)
         else:
-            self.rel_h = nn.Linear(hid_size, self.rel_mlp_dim)
-            self.rel_c = nn.Linear(hid_size, self.rel_mlp_dim)
+            self.rel_h = nn.Linear(hid_size+3*self.pos_dim, self.rel_mlp_dim)
+            self.rel_c = nn.Linear(hid_size+3*self.pos_dim, self.rel_mlp_dim)
             #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
             self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
             self.basic_parameters.append(self.rel_h)
@@ -520,17 +521,18 @@ class SDPBiaffineParser(nn.Module):
         self.encoder_output = output
         return output, ht
 
-    def _arc_mlp(self, hidden):
+    def _arc_mlp(self, hidden_i,hidden_j):
         if self.arc_mlp_dim == -1:
-            arc_h, arc_c = hidden, hidden
+            arc_h, arc_c = hidden_i, hidden_j
         else:
             if self.activation:
                 # output size [batch, length, arc_mlp_dim]
-                arc_h = self.activation(self.arc_h(hidden))
-                arc_c = self.activation(self.arc_c(hidden))
+                arc_c = self.activation(self.arc_c(hidden_i))
+                arc_h = self.activation(self.arc_h(hidden_j))
             else:
-                arc_h = self.arc_h(hidden)
-                arc_c = self.arc_c(hidden)
+                arc_c = self.arc_c(hidden_i)
+                arc_h = self.arc_h(hidden_j)
+
 
         # apply dropout on arc
         # [batch, length, dim] --> [batch, 2 * length, dim]
@@ -540,17 +542,18 @@ class SDPBiaffineParser(nn.Module):
 
         return arc_h, arc_c
 
-    def _rel_mlp(self, hidden):
+    def _rel_mlp(self, hidden_i,hidden_j):
         if self.rel_mlp_dim == -1:
-            rel_h, rel_c = hidden, hidden
+            rel_h, rel_c = hidden_i, hidden_j
         else:
             if self.activation:
                 # output size [batch, length, rel_mlp_dim]
-                rel_h = self.activation(self.rel_h(hidden))
-                rel_c = self.activation(self.rel_c(hidden))
+                rel_c = self.activation(self.rel_c(hidden_i))
+                rel_h = self.activation(self.rel_h(hidden_j))
+
             else:
-                rel_h = self.rel_h(hidden)
-                rel_c = self.rel_c(hidden)
+                rel_c = self.rel_c(hidden_i)
+                rel_h = self.rel_h(hidden_j)
 
         # apply dropout on rel
         # [batch, length, dim] --> [batch, 2 * length, dim]
@@ -649,19 +652,37 @@ class SDPBiaffineParser(nn.Module):
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
         # *********** pattern embedding **************
+        # (batch,seq_len,seq_len,hidden_size)
         encoder_output_i = encoder_output.unsqueeze(2).expand(2,seq_len) #(i<-j),i的表示
-        encoder_output_j = encoder_output.unsqueeze(2).expand(2,seq_len) #(j->i),j的表示
+        # encoder_output_j = encoder_output.unsqueeze(2).expand(2,seq_len) #(j->i),j的表示
+
         node_labeling = torch.sum(self.labels_ebbed(origin_types),dim=2)
-        head_num = torch.sum(src_heads.gt(0).float())
-        node_labeling = node_labeling/head_num  #每个节点label的平均
+        head_num = torch.sum(src_heads)
+        # (batch,seq_len,hidden_size)
+        node_labeling = node_labeling/head_num.float()  #每个节点label的平均
+        # (batch,seq_len,seq_len) distant_embedding
+        # (batch,seq_len,seq_len,seq_len) nearest_par_labeling
         nearest_par_labeling,distant_embedding = self.get_neaest_par(heads)
+        nearest_par_embedd = torch.sum(self.labels_ebbed(nearest_par_labeling),dim=-2)
+        par_num = torch.sum(nearest_par_labeling,dim=-1)
+        nearest_par_embedd = nearest_par_embedd/par_num.float()   #(batch,seq_len,seq_len,hidden_size)
+
+        distant_embedd = self.pattern_ebbed(distant_embedding)
+        # 进行embedding 合并
+        merge1 = torch.cat(encoder_output_i,node_labeling.unsqueeze(2).expand(2,seq_len),dim=-1)
+        merge2 = torch.cat(merge1,nearest_par_embedd,dim=-1)
+        embedding_i = torch.cat(merge2,distant_embedd,dim=-1)
+
+        embedding_j = torch.cat(merge2,distant_embedd.transpose(0,2,1,3),dim=-1)
+
 
         # ***********pattern embedding ***********
 
         # (batch, seq_len, arc_mlp_dim)
-        arc_h, arc_c = self._arc_mlp(encoder_output)
+        arc_h, arc_c = self._arc_mlp(embedding_i,embedding_j)
+
         # (batch, seq_len, seq_len)
-        arc_logits = self.arc_attention(arc_c, arc_h)
+        arc_logits = self.arc_attention(arc_c, arc_h.transpose(0,2,1,3))
         # arc_attention1 jeffrey 2021-9-12
         # arc_embedding = self.arc_ebbed((origin_heads>0).type(torch.long))
         # arc_logits1 = arc_embedding @ torch.unsqueeze(arc_c,-1)
@@ -670,9 +691,9 @@ class SDPBiaffineParser(nn.Module):
         #print ('arc_loss:', arc_losses[-1].sum())
 
         # (batch, length, rel_mlp_dim)
-        rel_h, rel_c = self._rel_mlp(encoder_output)
+        rel_h, rel_c = self._rel_mlp(embedding_i,embedding_j)
         # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.rel_attention(rel_c, rel_h)
+        rel_logits = self.rel_attention(rel_c, rel_h.transpose(0,2,1,3))
         # rel_attention1 jeffrey 2021-9-12
 
         # rel_embedding = self.labels_ebbed(origin_types)

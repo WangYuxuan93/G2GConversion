@@ -36,7 +36,7 @@ class BiAffine_v2(nn.Module):
         #nn.init.zeros_(self.weight)
         nn.init.xavier_uniform_(self.weight)
 
-    def forward(self, x, y):
+    def forward(self, x, y,q_len):
         if self.bias_x:
             x = torch.cat([x, x.new_ones(x.shape[:-1]).unsqueeze(-1)], -1)
         if self.bias_y:
@@ -47,7 +47,7 @@ class BiAffine_v2(nn.Module):
         y = y.unsqueeze(1)
         # [batch_size, n_out, seq_len, seq_len]
         # s = torch.matmul(torch.matmul(x, self.weight), y.transpose(-1, -2))
-        s = x @ self.weight @ y.transpose(-1, -2)
+        s = x @ self.weight.unsqueeze(1).expand(q_len,dim=1) @ y.transpose(-1, -2)
         # remove dim 1 if n_out == 1
         s = s.squeeze(1)
 

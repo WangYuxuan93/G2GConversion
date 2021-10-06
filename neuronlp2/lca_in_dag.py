@@ -131,9 +131,8 @@ class LCADAG(object):
     def get_all_pattern(self):
         patterns = np.zeros_like(self.G)
         for i in range(self.q_len):
-            for j in range(i+1,self.q_len):
+            for j in range(self.q_len):
                 patterns[i,j] = self.get_pattern(i,j)
-                patterns[j,i] = patterns[i,j]
         return patterns
 
 
