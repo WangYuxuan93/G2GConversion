@@ -298,7 +298,10 @@ class CoNLLXReaderSDP(object):
             word_ids.append(self.__word_alphabet.get_index(word))
 
             postags.append(pos)
-            pos_ids.append(self.__pos_alphabet.get_index(pos))
+            try:
+                pos_ids.append(self.__pos_alphabet.get_index(pos))
+            except:
+                pos_ids.append(self.__pos_alphabet.get_index("_PAD_POS"))
 
             types.append(typelist)
             #  exception:

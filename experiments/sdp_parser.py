@@ -657,14 +657,16 @@ def train(args):
                 network.load_state_dict(torch.load(pretrain, map_location=device))
             except:
                 pre_dict = torch.load(pretrain, map_location=device)
-                now_dict = network.state_dict()
-                update_dict = {}
-                for k, v in pre_dict.items():
-                    if k in now_dict and k not in ["arc_attention.weight","rel_attention.weight"]:
-                        update_dict[k] = v
-                now_dict.update(update_dict)
-                network.load_state_dict(now_dict)
-                # network.load_state_dict(pre_dict['state_dict'])
+                #  ************* do not load attention matrix ****************
+                # now_dict = network.state_dict()
+                # update_dict = {}
+                # for k, v in pre_dict.items():
+                #     if k in now_dict and k not in ["arc_attention.weight","rel_attention.weight"]:
+                #         update_dict[k] = v
+                # now_dict.update(update_dict)
+                # network.load_state_dict(now_dict)
+                # *********** end *****************
+                network.load_state_dict(pre_dict['state_dict'])
             logger.info("Loading pretrained model, Starting finetune ")
         logger.info("Loading pre-trained model from: %s" % pretrain)
 
