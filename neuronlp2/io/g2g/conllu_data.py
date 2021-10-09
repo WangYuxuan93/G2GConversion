@@ -5,13 +5,16 @@ import numpy as np
 from collections import defaultdict, OrderedDict
 import torch
 import re
-
+import time
 from neuronlp2.io.g2g.reader import CoNLLUReaderG2G
 from neuronlp2.io.alphabet import Alphabet
 from neuronlp2.io.logger import get_logger
 from neuronlp2.io.common import DIGIT_RE, MAX_CHAR_LENGTH, UNK_ID
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from neuronlp2.io.common import ROOT, END, ROOT_CHAR, ROOT_POS, ROOT_TYPE, END_CHAR, END_POS, END_TYPE
+from neuronlp2.lca_in_dag_cuda import LCADAG
+from multiprocessing import  Process
+import multiprocessing
 
 # Special vocabulary symbols - we always put them at the start.
 _START_VOCAB = [PAD, ROOT, END]
@@ -19,6 +22,23 @@ NUM_SYMBOLIC_TAGS = 3
 
 _buckets = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 140]
 
+def get_neaest_par(heads):
+        # BFS(i)
+        # BFS(j)
+        # 同时求交集
+        # batch,q_len,q_len = heads.size()
+        # heads = heads.cpu().numpy().tolist()
+        # batch_par = np.zeros((batch,q_len,q_len,q_len))
+        # batch_pattern = np.zeros((batch,q_len,q_len))
+        lca = LCADAG(heads)
+        patterns = lca.get_all_pattern()
+        par = lca.get_ancestor()
+        return par,patterns
+
+def worker(heads,q1,q2):
+    a,b = get_neaest_par(heads)
+    q1.put(a)
+    q2.put(b)
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<
 def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
@@ -132,28 +152,50 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
         single = torch.from_numpy(single)
         lengths = torch.from_numpy(lengths)
         pres = torch.from_numpy(preid_inputs)
-        # source graph
+
+
+
+
         src_heads = torch.from_numpy(src_hid_inputs)
         src_types = torch.from_numpy(src_tid_inputs)
-
+        nearest_par_labeling, distant_embedding = get_neaest_par(src_heads)
+        # source graph
+        # ==================== 进行原始信息的计算 ===========================
+        # res = torch.chunk(src_heads, 10, dim=0)
+        # q1 = multiprocessing.Queue()
+        # q2 = multiprocessing.Queue()
+        # jobs = []
+        # for i in range(len(res)):
+        #     p = multiprocessing.Process(target=worker, args=(res[i].numpy(), q1, q2))
+        #     jobs.append(p)
+        #     p.start()
+        # for p in jobs:
+        #     p.join()
+        #
+        # nearest_par_labeling = (torch.from_numpy(q1.get()) for j in jobs)
+        # distant_embedding = (torch.from_numpy(q2.get()) for j in jobs)
+        # nearest_par_labeling = torch.cat(nearest_par_labeling, dim=0)
+        # distant_embedding = torch.cat(distant_embedding, dim=0)
+        # ================ end ====================
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
                        'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
                        'SRC': np.array(src_words[bucket_id],dtype=object), 
-                       'SRC_HEAD': src_heads, 'SRC_TYPE': src_types }
+                       'SRC_HEAD': src_heads, 'SRC_TYPE': src_types,"info1":nearest_par_labeling,"info2":distant_embedding}
         data_tensors.append(data_tensor)
+        print("which bucket is done!: %d" % bucket_id)
     return data_tensors, bucket_sizes
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<<
 def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
               pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
-              mask_out_root=False, pos_idx=4):
+              mask_out_root=False,pos_idx=4,old_labels=None):
     data = []
     max_length = 0
     max_char_length = 0
     print('Reading data from %s' % source_path)
     counter = 0
     reader = CoNLLUReaderG2G(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet,
-                          pre_alphabet=pre_alphabet, pos_idx=pos_idx)
+                          pre_alphabet=pre_alphabet, pos_idx=pos_idx,old_labels=old_labels)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
     src_words = []
     while inst is not None and (not max_size or counter < max_size):
@@ -245,11 +287,29 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
     single = torch.from_numpy(single)
     lengths = torch.from_numpy(lengths)
     pres = torch.from_numpy(preid_inputs)
-    # source graph
+
+
     src_heads = torch.from_numpy(src_hid_inputs)
     src_types = torch.from_numpy(src_tid_inputs)
-
+    nearest_par_labeling, distant_embedding = get_neaest_par(src_heads)
+    #  ========= source graph ==================
+    # res = torch.chunk(src_heads, 10, dim=0)
+    # q1 = multiprocessing.Queue()
+    # q2 = multiprocessing.Queue()
+    # jobs = []
+    # for i in range(len(res)):
+    #     p = multiprocessing.Process(target=worker, args=(res[i].numpy(), q1, q2))
+    #     jobs.append(p)
+    #     p.start()
+    # for p in jobs:
+    #     p.join()
+    #
+    # nearest_par_labeling = (torch.from_numpy(q1.get()) for j in jobs)
+    # distant_embedding = (torch.from_numpy(q2.get()) for j in jobs)
+    # nearest_par_labeling = torch.cat(nearest_par_labeling, dim=0)
+    # distant_embedding = torch.cat(distant_embedding, dim=0)
+    # ================ end ============
     data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
                    'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': src_words,
-                   'PRETRAINED': pres, 'SRC_HEAD': src_heads, 'SRC_TYPE': src_types}
+                   'PRETRAINED': pres, 'SRC_HEAD': src_heads, 'SRC_TYPE': src_types,"info1":nearest_par_labeling,"info2":distant_embedding}
     return data_tensor, data_size

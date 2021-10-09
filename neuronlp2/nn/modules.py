@@ -47,7 +47,8 @@ class BiAffine_v2(nn.Module):
         y = y.unsqueeze(1)
         # [batch_size, n_out, seq_len, seq_len]
         # s = torch.matmul(torch.matmul(x, self.weight), y.transpose(-1, -2))
-        s = x @ self.weight.unsqueeze(1).expand(q_len,dim=1) @ y.transpose(-1, -2)
+        s = x @ self.weight.unsqueeze(1).repeat(1,q_len,1,1) * y
+        s = torch.sum(s,dim=-1)
         # remove dim 1 if n_out == 1
         s = s.squeeze(1)
 

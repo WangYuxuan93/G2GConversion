@@ -4,11 +4,12 @@
 
 import numpy as np
 from queue import Queue
-
+import torch
 
 class LCADAG(object):
 
     def __init__(self,G):
+        # self.G = G.to(torch.device('cuda', 0))
         self.G = G
         self.batch,self.q_len,_ = G.shape
 
@@ -31,8 +32,8 @@ class LCADAG(object):
         :param i:
         :return:
         """
-        next_value = np.nonzero(g[i])
-        return list(next_value[0])
+        next_value = torch.where(g[i]>0)
+        return next_value[0]
 
     def get_child(self,g,i):
         """
@@ -40,17 +41,18 @@ class LCADAG(object):
         :param i:
         :return:
         """
-        child_value = np.nonzero(g[:,i])
-        return list(child_value[0])
+        child_value = torch.where(g[:,i]>0)
+        return child_value[0]
 
     def get_ancestor(self):
-        par = np.zeros((self.batch,self.q_len,self.q_len,self.q_len),dtype)
+        par = torch.zeros((self.batch,self.q_len,self.q_len,self.q_len),dtype=torch.long)
         for bt in range(self.batch):
+            g = self.G[bt]
             for i in range(0,self.q_len):
                 if i==0:
                     par[bt,i,:,0]=1
                 for j in range(i+1,self.q_len):
-                    for k in self.get_nearest_par(self.G[bt],i,j):
+                    for k in self.get_nearest_par(g,i,j):
                         par[bt][i][j][k]=1
         return par
 
@@ -67,9 +69,9 @@ class LCADAG(object):
             cur = queue.get() # 弹出元素
             res.append(cur)
             for next in self.get_next(g,cur):   #cur.nexts方法需要实现
-                if next not in nodeSet:
-                    nodeSet.add(next)
-                    queue.put(next)
+                if next.item() not in nodeSet:
+                    nodeSet.add(next.item())
+                    queue.put(next.item())
         return res
 
     def get_nearest_par(self,g,i,j):
@@ -88,40 +90,29 @@ class LCADAG(object):
         for x in par:
             del_par = self.get_next(g,x)
             if len(del_par)>0:
-                temp = set(del_par)&(set(par))
+                temp = set(list(del_par.numpy()))&(set(par))
                 del_node = del_node.union(temp)
         return list(set(par)-del_node)
 
-    def get_pattern(self,g,i,j):  #i <- j
+    def get_pattern(self,g,g2,uG3,uG4,uG5,uG6,i,j):  #i <- j
         if i==j:
             return 0
-        par = self.get_next(g,i)
         par_reverse = self.get_next(g,j)
-        if j in par: # consistent
+        if g[i,j]: # consistent
             return 1
-        for k in par: # grand
-            grand_par = self.get_next(g,k)
-            if j in grand_par:
-                return 2
-        if len(list(set(par) & set(par_reverse)))>0: # sibling
+        if g2[i,j]>0: # grand
+            return 2
+        if torch.any((g[i]==g[j])*g[i]>0): # sibling
             return 3
-        if i in par_reverse: # reverse
+        if g[j,i]: # reverse consistent
             return 4
-        for k in par_reverse: # reverse grand
-            reverse_grand_par = self.get_next(g,k)
-            if i in reverse_grand_par:
-                return 5
+        if g2[j,i]>0: # reverse grand
+            return 5
         # reverse sibling
-        child_i = self.get_child(g,i)
-        child_j = self.get_child(g,j)
-        if len(list(set(child_i)&set(child_j)))>0:
+        if torch.any((g[:,i]==g[:,j])*g[:,i]>0):
             return 6
         # 计算两个节点直接的距离
-        undirected_G = self.get_uG(g)
-        uG3 = np.dot(undirected_G, np.dot(undirected_G, undirected_G))
-        uG4 = np.dot(undirected_G, uG3)
-        uG5 = np.dot(undirected_G, uG4)
-        uG6 = np.dot(undirected_G, uG5)
+
         if uG3[i][j]>0:
             return 7
         if uG4[i][j]>0 or uG5[i][j]>0:
@@ -131,11 +122,18 @@ class LCADAG(object):
         return 10
 
     def get_all_pattern(self):
-        patterns = np.zeros_like(self.G)
+        patterns = torch.zeros_like(self.G)
         for bt in range(self.batch):
+            g = self.G[bt]
+            g2 = torch.mm(g,g)
+            ug = g | g.transpose(0, 1)
+            uG3 = torch.mm(torch.mm(ug,ug),ug)
+            uG4 = torch.mm(uG3,ug)
+            uG5 = torch.mm(uG4,ug)
+            uG6 = torch.mm(uG5,ug)
             for i in range(self.q_len):
                 for j in range(self.q_len):
-                    patterns[bt,i,j] = self.get_pattern(self.G[bt],i,j)
+                    patterns[bt,i,j] = self.get_pattern(g,g2,uG3,uG4,uG5,uG6,i,j)
         return patterns
 
 

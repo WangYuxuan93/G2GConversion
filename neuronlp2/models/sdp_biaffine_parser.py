@@ -145,15 +145,15 @@ class SDPBiaffineParser(nn.Module):
         # collect all params for language model
         self.lm_parameters = []
         # for Pretrained LM
-        if self.pretrained_lm == 'sroberta':
-            config = SemSynRobertaConfig.from_pretrained(lm_config)
-            config.graph["num_rel_labels"] = num_src_labels
-            self.lm_encoder = SemSynRobertaModel.from_pretrained(lm_path, config=config)
-            self.lm_parameters.append(self.lm_encoder)
-            logger.info("[LM] Pretrained Language Model Type: SemSynRoberta")
-            logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
-            lm_hidden_size = self.lm_encoder.config.hidden_size
-        elif self.pretrained_lm != 'none':
+        # if self.pretrained_lm == 'sroberta':
+            # config = SemSynRobertaConfig.from_pretrained(lm_config)
+            # config.graph["num_rel_labels"] = num_src_labels
+            # self.lm_encoder = SemSynRobertaModel.from_pretrained(lm_path, config=config)
+            # self.lm_parameters.append(self.lm_encoder)
+            # logger.info("[LM] Pretrained Language Model Type: SemSynRoberta")
+            # logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
+            # lm_hidden_size = self.lm_encoder.config.hidden_size
+        if self.pretrained_lm != 'none':
             self.lm_encoder = AutoModel.from_pretrained(lm_path)
             self.lm_parameters.append(self.lm_encoder)
             logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
@@ -291,7 +291,7 @@ class SDPBiaffineParser(nn.Module):
 
         # jeffrey 2021-9-12
         self.labels_ebbed = nn.Embedding(num_src_labels, self.rel_mlp_dim, padding_idx=0)  # padding的时候读取的向量是第几个
-        self.pattern_ebbed = nn.Embedding(10+1,self.arc_mlp_dim,padding_idx=0)
+        self.pattern_ebbed = nn.Embedding(10+1,self.rel_mlp_dim,padding_idx=0)
         self.basic_parameters.append(self.labels_ebbed)
         self.basic_parameters.append(self.pattern_ebbed)
 
@@ -637,7 +637,8 @@ class SDPBiaffineParser(nn.Module):
     def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels,
                 bpes=None, first_idx=None, input_elmo=None, mask=None, lan_id=None,
                 src_heads=None, src_types=None,
-                origin_heads=None,origin_types=None):
+                origin_heads=None,origin_types=None,
+                info1=None,info2=None):
         # Pre-process
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
@@ -653,27 +654,30 @@ class SDPBiaffineParser(nn.Module):
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
         # *********** pattern embedding **************
         # (batch,seq_len,seq_len,hidden_size)
-        encoder_output_i = encoder_output.unsqueeze(2).expand(2,seq_len) #(i<-j),i的表示
+        encoder_output_i = encoder_output.unsqueeze(2).repeat(1,1,seq_len,1) #(i<-j),i的表示
         # encoder_output_j = encoder_output.unsqueeze(2).expand(2,seq_len) #(j->i),j的表示
 
         node_labeling = torch.sum(self.labels_ebbed(origin_types),dim=2)
-        head_num = torch.sum(src_heads)
+        head_num = torch.sum(origin_heads,dim=-1)
         # (batch,seq_len,hidden_size)
-        node_labeling = node_labeling/head_num.float()  #每个节点label的平均
+        # 需要解决nan
+        node_labeling = node_labeling.div(head_num.unsqueeze(-1).float())  #每个节点label的平均
+        node_labeling = torch.where(torch.isnan(node_labeling),torch.full_like(node_labeling,0),node_labeling)
         # (batch,seq_len,seq_len) distant_embedding
         # (batch,seq_len,seq_len,seq_len) nearest_par_labeling
-        nearest_par_labeling,distant_embedding = self.get_neaest_par(heads)
-        nearest_par_embedd = torch.sum(self.labels_ebbed(nearest_par_labeling),dim=-2)
+        # nearest_par_labeling,distant_embedding = self.get_neaest_par(origin_heads)
+        nearest_par_labeling,distant_embedding = info1,info2
+        nearest_par_embedd = torch.sum(self.labels_ebbed(nearest_par_labeling.long()),dim=-2)
         par_num = torch.sum(nearest_par_labeling,dim=-1)
-        nearest_par_embedd = nearest_par_embedd/par_num.float()   #(batch,seq_len,seq_len,hidden_size)
-
-        distant_embedd = self.pattern_ebbed(distant_embedding)
+        # 需要解决nan
+        nearest_par_embedd = nearest_par_embedd.div(par_num.unsqueeze(-1).float())   #(batch,seq_len,seq_len,hidden_size)
+        nearest_par_embedd = torch.where(torch.isnan(nearest_par_embedd), torch.full_like(nearest_par_embedd, 0), nearest_par_embedd)
+        distant_embedd = self.pattern_ebbed(distant_embedding.long())
         # 进行embedding 合并
-        merge1 = torch.cat(encoder_output_i,node_labeling.unsqueeze(2).expand(2,seq_len),dim=-1)
-        merge2 = torch.cat(merge1,nearest_par_embedd,dim=-1)
-        embedding_i = torch.cat(merge2,distant_embedd,dim=-1)
-
-        embedding_j = torch.cat(merge2,distant_embedd.transpose(0,2,1,3),dim=-1)
+        merge1 = torch.cat((encoder_output_i,node_labeling.unsqueeze(2).repeat(1,1,seq_len,1)),dim=-1)
+        merge2 = torch.cat((merge1,nearest_par_embedd),dim=-1)
+        embedding_i = torch.cat((merge2,distant_embedd),dim=-1)
+        embedding_j = torch.cat((merge2,distant_embedd.transpose(1,2)),dim=-1)
 
 
         # ***********pattern embedding ***********
@@ -682,7 +686,7 @@ class SDPBiaffineParser(nn.Module):
         arc_h, arc_c = self._arc_mlp(embedding_i,embedding_j)
 
         # (batch, seq_len, seq_len)
-        arc_logits = self.arc_attention(arc_c, arc_h.transpose(0,2,1,3))
+        arc_logits = self.arc_attention(arc_c, arc_h.transpose(1,2),seq_len)
         # arc_attention1 jeffrey 2021-9-12
         # arc_embedding = self.arc_ebbed((origin_heads>0).type(torch.long))
         # arc_logits1 = arc_embedding @ torch.unsqueeze(arc_c,-1)
@@ -693,7 +697,7 @@ class SDPBiaffineParser(nn.Module):
         # (batch, length, rel_mlp_dim)
         rel_h, rel_c = self._rel_mlp(embedding_i,embedding_j)
         # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.rel_attention(rel_c, rel_h.transpose(0,2,1,3))
+        rel_logits = self.rel_attention(rel_c, rel_h.transpose(1,2),seq_len)
         # rel_attention1 jeffrey 2021-9-12
 
         # rel_embedding = self.labels_ebbed(origin_types)
@@ -731,7 +735,7 @@ class SDPBiaffineParser(nn.Module):
 
     def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None,
                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0,target_mask=None,
-               src_heads=None, src_types=None):
+               src_heads=None, src_types=None,origin_heads=None,origin_types=None,info1=None,info2=None):
         """
         Args:
             input_word: Tensor
@@ -766,15 +770,44 @@ class SDPBiaffineParser(nn.Module):
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
 
+        # decode 也需要加入辅助信息
+        encoder_output_i = encoder_output.unsqueeze(2).repeat(1, 1, seq_len, 1)  # (i<-j),i的表示
+        # encoder_output_j = encoder_output.unsqueeze(2).expand(2,seq_len) #(j->i),j的表示
+
+        node_labeling = torch.sum(self.labels_ebbed(origin_types), dim=2)
+        head_num = torch.sum(origin_heads, dim=-1)
+        # (batch,seq_len,hidden_size)
+        # 需要解决nan
+        node_labeling = node_labeling.div(head_num.unsqueeze(-1).float())  # 每个节点label的平均
+        node_labeling = torch.where(torch.isnan(node_labeling), torch.full_like(node_labeling, 0), node_labeling)
+        # (batch,seq_len,seq_len) distant_embedding
+        # (batch,seq_len,seq_len,seq_len) nearest_par_labeling
+        #nearest_par_labeling, distant_embedding = self.get_neaest_par(origin_heads)
+        nearest_par_labeling, distant_embedding = info1,info2
+        nearest_par_embedd = torch.sum(self.labels_ebbed(nearest_par_labeling.long()), dim=-2)
+        par_num = torch.sum(nearest_par_labeling, dim=-1)
+        # 需要解决nan
+        nearest_par_embedd = nearest_par_embedd.div(par_num.unsqueeze(-1).float())  # (batch,seq_len,seq_len,hidden_size)
+        nearest_par_embedd = torch.where(torch.isnan(nearest_par_embedd), torch.full_like(nearest_par_embedd, 0), nearest_par_embedd)
+        distant_embedd = self.pattern_ebbed(distant_embedding.long())
+        # 进行embedding 合并
+        merge1 = torch.cat((encoder_output_i, node_labeling.unsqueeze(2).repeat(1, 1, seq_len, 1)), dim=-1)
+        merge2 = torch.cat((merge1, nearest_par_embedd), dim=-1)
+        embedding_i = torch.cat((merge2, distant_embedd), dim=-1)
+
+        embedding_j = torch.cat((merge2, distant_embedd.transpose(1, 2)), dim=-1)
+
+
         # (batch, seq_len, arc_mlp_dim)
-        arc_h, arc_c = self._arc_mlp(encoder_output)
+        arc_h, arc_c = self._arc_mlp(embedding_i,embedding_j)
         # (batch, seq_len, seq_len)
-        arc_logits = self.arc_attention(arc_c, arc_h)
+
+        arc_logits = self.arc_attention(arc_c, arc_h.transpose(1,2),seq_len)
 
         # (batch, length, rel_mlp_dim)
-        rel_h, rel_c = self._rel_mlp(encoder_output)
+        rel_h, rel_c = self._rel_mlp(embedding_i,embedding_j)
         # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.rel_attention(rel_c, rel_h)
+        rel_logits = self.rel_attention(rel_c, rel_h.transpose(1,2),seq_len)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
         #rel_logits = rel_logits.permute(0, 3, 2, 1)

@@ -140,6 +140,7 @@ class CoNLLUReaderG2G(object):
             type_ids.append(temp)
 
             # source graph
+            src_temp=[]
             src_headlist = []
             src_typelist = []
             for x in tokens[9].split("|"):
@@ -149,7 +150,6 @@ class CoNLLUReaderG2G(object):
                     src_typelist.append(p[1])
             src_heads.append(src_headlist)
             src_types.append(src_typelist)
-            src_temp=[]
             # for type in src_typelist:
             #     try:
             #         temp_type = ud_v2_en_label_mapping[type]
@@ -162,7 +162,7 @@ class CoNLLUReaderG2G(object):
             #         src_temp.append(temp_type)
             # src_type_ids.append(src_temp)
             # jeffrey 2021-9-12
-            for type in src_typelist and self.__old_alphabet:
+            for type in src_typelist:
                 try:
                     temp_type = self.__old_alphabet.get_index(type)
                     src_temp.append(temp_type)
@@ -172,7 +172,7 @@ class CoNLLUReaderG2G(object):
                     # self.__type_alphabet.next_index +=1
                     print("【ERROR arc_type:%s】" % type)
                     src_temp.append(temp_type)
-
+            src_type_ids.append(src_temp)
             # save original word in words (data['SRC']), to recover this for normalize_digits=True
             words.append(word)
             word = DIGIT_RE.sub("0", word) if normalize_digits else word
