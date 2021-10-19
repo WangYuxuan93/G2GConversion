@@ -72,7 +72,7 @@ class SDPBiaffineParser(nn.Module):
 		super(SDPBiaffineParser, self).__init__()
 		self.hyps = hyps
 		self.device = device
-
+		self.lm_path = lm_path
 		# for input embeddings
 		use_pos = hyps['input']['use_pos']
 		use_char = hyps['input']['use_char']
@@ -789,7 +789,7 @@ class SDPBiaffineParser(nn.Module):
 		rel_logits = self.rel_attention(rel_c, rel_h)
 		# (batch, n_rels, seq_len_c, seq_len_h)
 		# => (batch, length_h, length_c, num_labels)
-		rel_logits = rel_logits.permute(0,3,2,1)
+		rel_logits = rel_logits.permute(0,2,3,1)
 
 		if mask is not None:
 			minus_mask = mask.eq(0).unsqueeze(2)
@@ -802,7 +802,7 @@ class SDPBiaffineParser(nn.Module):
 		return arc_probs, rel_probs
 
 	def get_logits(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
-				bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
+				bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0,target_mask=None):
 		"""
 		Args:
 			input_word: Tensor
@@ -828,6 +828,7 @@ class SDPBiaffineParser(nn.Module):
 		batch_size, seq_len = input_word.size()
 		# (batch, seq_len), seq mask, where at position 0 is 0
 		root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
+		mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
 
 		# (batch, seq_len, embed_size)
 		embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
@@ -846,10 +847,28 @@ class SDPBiaffineParser(nn.Module):
 		rel_logits = self.rel_attention(rel_c, rel_h)
 		# (batch, n_rels, seq_len_c, seq_len_h)
 		# => (batch, length_h, length_c, num_labels)
-		rel_logits = rel_logits.permute(0,3,2,1)
+		rel_logits = rel_logits.permute(0,2,3,1)
 
 		if mask is not None:
 			minus_mask = mask.eq(0).unsqueeze(2)
 			arc_logits.masked_fill_(minus_mask, float('-inf'))
 
-		return arc_logits, rel_logits
+
+		# arc_preds = torch.sigmoid(arc_logits).ge(0.5).float()  # 多个arc
+		# # (batch_size, len_c, len_h, n_rels)
+		# transposed_type_logits = rel_logits.permute(0, 2, 3, 1)  # permute重新排列张量
+		# # (batch_size, seq_len, seq_len)
+		# # 没做softmax
+		# # type_preds = transposed_type_logits.argmax(-1)  # 在只有一个label的情况下找到最大的索引
+		# type_preds = F.softmax(transposed_type_logits, dim=-1)
+		# # jeffrey: 加一个mask 过滤不在目标标签体系中的label:
+		# if target_mask is not None:
+		# 	target_mask = torch.Tensor(target_mask)
+		# 	target_mask = target_mask.to(self.device)
+		# 	s = target_mask.size()[0]
+		# 	c = target_mask.view([1, 1, 1, s])
+		# 	d = c.repeat([batch_size, seq_len, seq_len, 1])
+		# 	type_preds = type_preds * d  # mask
+		# # logger.info(type_preds[0, 1, 2, :])
+		# type_preds = type_preds.argmax(dim=-1)
+		return arc_logits,rel_logits,mask_3D
