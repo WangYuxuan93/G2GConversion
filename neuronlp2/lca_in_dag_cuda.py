@@ -49,8 +49,9 @@ class LCADAG(object):
         for bt in range(self.batch):
             g = self.G[bt]
             for i in range(0,self.q_len):
-                if i==0:
-                    par[bt,i,:,0]=1
+                # if i==0:
+                #     par[bt,i,:,0]=1
+                par[bt,i,i,i] = 1  # (i,i)的最短公共节点是自身
                 for j in range(i+1,self.q_len):
                     for k in self.get_nearest_par(g,i,j):
                         par[bt][i][j][k]=1
@@ -60,7 +61,7 @@ class LCADAG(object):
     def get_ancestor_by_bfs(self,g,i):
         res = []
         if i == 0:
-            return res
+            return [0]
         queue = Queue()
         nodeSet = set()
         queue.put(i)
@@ -78,7 +79,8 @@ class LCADAG(object):
         res_i = self.get_ancestor_by_bfs(g,i)
         res_j = self.get_ancestor_by_bfs(g,j)
         candi = list(set(res_i).intersection(set(res_j)))
-        return self.without_in_degree(g,candi)
+        fu = self.without_in_degree(g,candi)
+        return fu
 
     def without_in_degree(self,g,par):
         """

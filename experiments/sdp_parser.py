@@ -218,7 +218,8 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=1, batch_size=256, write_to_tmp=True, prev_LF=0.0, pred_filename=None, tokenizer=None,
-         multi_lan_iter=False, ensemble=False, write_signal=False, target_mask=None):
+         multi_lan_iter=False, ensemble=False, write_signal=False, target_mask=None,
+         is_node=False,is_par=False,is_pattern=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -342,7 +343,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             err_types = None
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
                                                    leading_symbolic=common.NUM_SYMBOLIC_TAGS, target_mask=target_mask,
-                                                   src_heads=src_heads, src_types=src_types,origin_heads=_src_heads,origin_types=_src_types,info1=info1,info2=info2)
+                                                   src_heads=src_heads, src_types=src_types,origin_heads=_src_heads,origin_types=_src_types,info1=info1,info2=info2,
+                                                   is_node=is_node,is_par=is_par,is_pattern=is_pattern)
         else:
             pres = None
             err_types = None
@@ -456,7 +458,7 @@ def train(args):
     torch.backends.cudnn.benchmark = False
 
     args.cuda = torch.cuda.is_available()
-    device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
+    device = torch.device('cuda') if args.cuda else torch.device('cpu')
     data_format = args.format
     if data_format == 'conllx':
         data_reader = conllx_data
@@ -556,6 +558,9 @@ def train(args):
     num_pos = pos_alphabet.size()
     num_rels = rel_alphabet.size()
     num_old_rels = rel_alphabet_source.size()
+    is_node = args.is_node
+    is_par = args.is_par
+    is_pattern = args.is_pattern
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
@@ -613,12 +618,36 @@ def train(args):
         print('character OOV: %d' % oov)
         return torch.from_numpy(table)
 
+    # label_dim = pattern_dim
+    def construct_label_embedding_table(label_dim):
+        scale = np.sqrt(3.0/label_dim)
+        table = np.empty([num_old_rels, label_dim], dtype=np.float32)
+        table[0, :] = np.zeros([1, label_dim]).astype(np.float32)
+        for index in range(1,num_old_rels):
+            embedding = np.random.uniform(-scale, scale, [1, label_dim]).astype(np.float32)
+            table[index, :] = embedding
+        return torch.from_numpy(table)
+
+    # pattern_dim = pattern_dim
+    def construct_distant_embedding_table(pattern_dim):
+        scale = np.sqrt(3.0 /pattern_dim )
+        table = np.empty([11, pattern_dim], dtype=np.float32)
+        table[0, :] = np.zeros([1, pattern_dim]).astype(np.float32)
+
+        for index in range(1, 11):
+            embedding = np.random.uniform(-scale, scale, [1, pattern_dim]).astype(np.float32)
+            table[index, :] = embedding
+        return torch.from_numpy(table)
+
+
     word_table = construct_word_embedding_table(only_pretrain_static=only_pretrain_static)
     char_table = construct_char_embedding_table()
+
 
     logger.info("constructing network...")
 
     hyps = json.load(open(args.config, 'r'))
+    pattern_dim = hyps["input"]["pattern_dim"]
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
@@ -630,6 +659,10 @@ def train(args):
     loss_interpolation = hyps['biaffine']['loss_interpolation']
     hidden_size = hyps['input_encoder']['hidden_size']
     num_lans = 1
+
+    label_table = construct_label_embedding_table(pattern_dim)
+    pattern_table = construct_distant_embedding_table(pattern_dim)
+
     if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')
         lans_dev = args.lan_dev.split(':')
@@ -651,12 +684,13 @@ def train(args):
     if model_type == 'Biaffine':
         network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
                                     use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,num_src_labels=num_old_rels)
+                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,num_src_labels=num_old_rels,labels_embed=label_table,
+                                    pattern_embed=pattern_table,is_node=is_node,is_par=is_par,is_pattern=is_pattern)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
     num_gpu = torch.cuda.device_count()
-    logger.info("GPU Number: %d" % num_gpu)
+    logger.info(" Number: GPU%d" % num_gpu)
     if args.fine_tune:
         if args.pretrain_roberta != "none":
             logger.info("Loading roberta state dict!")
@@ -705,6 +739,8 @@ def train(args):
         network.load_state_dict(pre_dict['state_dict'])
         optimizer.load_state_dict(pre_dict['optimizer'])
 
+
+
     n = 0
     for para in network.parameters():
         n += 1
@@ -724,6 +760,7 @@ def train(args):
                                                             pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
             data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        logger.info("不读取data_test")
         if test_path == "none":
             data_test = None
         else:
@@ -919,7 +956,7 @@ def train(args):
                 losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
                                              src_heads=src_heads, src_types=src_types,
                                              origin_heads=_src_heads,origin_types=_src_types,
-                                             info1=info1,info2=info2)
+                                             info1=info1,info2=info2,is_par=is_par,is_node=is_node,is_pattern=is_pattern)
             else:
                 pres = None
                 masks_enc = data['MASK_ENC'].to(device)
@@ -1050,7 +1087,8 @@ def train(args):
 
                     logger.info('Start evaluating dev:')
                     dev_stats, dev_stats_nopunct, dev_stats_root, f1_score = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                        batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=best_type_f)
+                        batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=best_type_f,is_node=is_node,
+                                                                                  is_par=is_par,is_pattern=is_pattern)
                     logger.info('End evaluating dev')
                     # pred_writer.close()
                     # gold_writer.close()
@@ -1098,29 +1136,30 @@ def train(args):
 
                         pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                         pred_writer.start(pred_filename)
-                        # gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
-                        # gold_writer.start(gold_filename)
+                        gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
+                        gold_writer.start(gold_filename)
 
 
 
-                        # if data_test:
-                        #     logger.info('Start evaluating test:')
-                        #     test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
-                        #         beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0)
-                        #
-                        #     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
-                        #     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
-                        #     test_root_correct, test_total_root, test_total_inst = test_stats_root
-                        #     test_arc_f = f1_score[0]
-                        #     test_type_f = f1_score[1]
-                        #     test_arc_p = f1_score[2]
-                        #     test_arc_r = f1_score[3]
-                        #     test_type_p = f1_score[4]
-                        #     test_type_r = f1_score[5]
-                        #
-                        #     pred_writer.close()
-                        # logger.info('End evaluating test:')
-                        # gold_writer.close()
+                        if data_test:
+                            logger.info('Start evaluating test:')
+                            test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                                beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
+                                is_node=is_node, is_par = is_par, is_pattern = is_pattern)
+
+                            test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                            test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                            test_root_correct, test_total_root, test_total_inst = test_stats_root
+                            test_arc_f = f1_score[0]
+                            test_type_f = f1_score[1]
+                            test_arc_p = f1_score[2]
+                            test_arc_r = f1_score[3]
+                            test_type_p = f1_score[4]
+                            test_type_r = f1_score[5]
+
+                            pred_writer.close()
+                        logger.info('End evaluating test:')
+                        gold_writer.close()
                     else:
                         patient += 1
 
@@ -1150,23 +1189,38 @@ def train(args):
                         patient = 0
 
             if num_epochs_without_improvement >= patient_epochs:
-                logger.info('Start evaluating test:')
-                if data_test:
-                    test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
-                        beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0)
-
-                    test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
-                    test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
-                    test_root_correct, test_total_root, test_total_inst = test_stats_root
-                    test_arc_f = f1_score[0]
-                    test_type_f = f1_score[1]
-                    test_arc_p = f1_score[2]
-                    test_arc_r = f1_score[3]
-                    test_type_p = f1_score[4]
-                    test_type_r = f1_score[5]
-
-                    pred_writer.close()
-                logger.info("End evaluating test")
+                # logger.info('Start evaluating test:')
+                # logger.info("先清除train和dev")
+                # del data_train
+                # del data_dev
+                # if test_path == "none":
+                #     data_test = None
+                # else:
+                #     if pretrained_lm=="sroberta":
+                #         logger.info("Reading test Data")
+                #         data_test = conllu_data.read_bucketed_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                #                                           pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
+                #
+                #     else:
+                #         data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                #                                               pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                # if data_test:
+                #     test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                #         beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
+                #                                                                      is_node=is_node,is_par=is_par,is_pattern=is_pattern)
+                #
+                #     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                #     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                #     test_root_correct, test_total_root, test_total_inst = test_stats_root
+                #     test_arc_f = f1_score[0]
+                #     test_type_f = f1_score[1]
+                #     test_arc_p = f1_score[2]
+                #     test_arc_r = f1_score[3]
+                #     test_type_p = f1_score[4]
+                #     test_type_r = f1_score[5]
+                #
+                #     pred_writer.close()
+                # logger.info("End evaluating test")
                 logger.info("More than %d epochs without improvement, exit!" % patient_epochs)
                 exit()
 
@@ -1303,6 +1357,10 @@ def parse(args):
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
+
+
+
+
     if args.ensemble:
         print("Not implemented")
         exit()
@@ -1455,11 +1513,13 @@ if __name__ == '__main__':
     args_parser.add_argument('--tol_epoch', type=int, default=0)
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
+    args_parser.add_argument('--is_node', action='store_true', default=False)
+    args_parser.add_argument('--is_par', action='store_true', default=False)
+    args_parser.add_argument('--is_pattern', action='store_true', default=False)
+
     # feature2
 
     args = args_parser.parse_args()
-
-
     if args.mode == 'train':
         train(args)
     else:

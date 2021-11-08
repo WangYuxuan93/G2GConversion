@@ -90,14 +90,21 @@ class SDPBiaffineParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
                  device=torch.device('cpu'),
                  embedd_word=None, embedd_char=None, embedd_pos=None,
+                 labels_embed=None, pattern_embed=None,
                  use_pretrained_static=True, use_random_static=False,
                  use_elmo=False, elmo_path=None,
                  pretrained_lm='none', lm_path=None, lm_config=None, num_src_labels=52,
-                 num_lans=1, log_name='Network'):
+                 num_lans=1, log_name='Network',is_node=False,is_par=False,is_pattern=False):
         super(SDPBiaffineParser, self).__init__()
         self.hyps = hyps
         self.device = device
 
+        self.labels_ebbed = labels_embed
+        self.pattern_ebbed = pattern_embed
+        self.pattern_dim = hyps['input']['pattern_dim']
+        self.is_node = is_node
+        self.is_par = is_par
+        self.is_pattern = is_pattern
         # for input embeddings
         use_pos = hyps['input']['use_pos']
         use_char = hyps['input']['use_char']
@@ -212,6 +219,8 @@ class SDPBiaffineParser(nn.Module):
 
         self.dropout_in = nn.Dropout2d(p=p_in)
         self.dropout_out = nn.Dropout2d(p=p_out)
+        self.dropout_in_3d = nn.Dropout3d(p=p_in)
+        self.dropout_out_3d = nn.Dropout3d(p=p_out)
         self.num_labels = num_labels
 
         enc_dim = lm_hidden_size + elmo_hidden_size + pretrained_static_size + random_static_size
@@ -289,9 +298,16 @@ class SDPBiaffineParser(nn.Module):
             self.input_encoder = None
             self.enc_out_dim = enc_dim
 
+        if self.is_node:
+            self.enc_out_dim = self.enc_out_dim+self.pattern_dim*2
+        if self.is_par:
+            self.enc_out_dim = self.enc_out_dim+self.pattern_dim
+        if self.is_pattern:
+            self.enc_out_dim = self.enc_out_dim+self.pattern_dim
+
         # jeffrey 2021-9-12
-        self.labels_ebbed = nn.Embedding(num_src_labels, self.rel_mlp_dim, padding_idx=0)  # padding的时候读取的向量是第几个
-        self.pattern_ebbed = nn.Embedding(10+1,self.rel_mlp_dim,padding_idx=0)
+        self.labels_ebbed = nn.Embedding(num_src_labels, self.pattern_dim, padding_idx=0)  # padding的时候读取的向量是第几个
+        self.pattern_ebbed = nn.Embedding(10+1,self.pattern_dim,padding_idx=0)
         self.basic_parameters.append(self.labels_ebbed)
         self.basic_parameters.append(self.pattern_ebbed)
 
@@ -321,8 +337,8 @@ class SDPBiaffineParser(nn.Module):
             self.arc_attention = BiAffine_v2(hid_size, bias_x=True, bias_y=False)
             self.basic_parameters.append(self.arc_attention)
         else:
-            self.arc_h = nn.Linear(hid_size+3*self.pos_dim, self.arc_mlp_dim)
-            self.arc_c = nn.Linear(hid_size+3*self.pos_dim, self.arc_mlp_dim)
+            self.arc_h = nn.Linear(hid_size, self.arc_mlp_dim)
+            self.arc_c = nn.Linear(hid_size, self.arc_mlp_dim)
             #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
             self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
 
@@ -334,8 +350,8 @@ class SDPBiaffineParser(nn.Module):
             self.rel_attention = BiAffine_v2(hid_size, n_out=self.num_labels, bias_x=True, bias_y=True)
             self.basic_parameters.append(self.rel_attention)
         else:
-            self.rel_h = nn.Linear(hid_size+3*self.pos_dim, self.rel_mlp_dim)
-            self.rel_c = nn.Linear(hid_size+3*self.pos_dim, self.rel_mlp_dim)
+            self.rel_h = nn.Linear(hid_size, self.rel_mlp_dim)
+            self.rel_c = nn.Linear(hid_size, self.rel_mlp_dim)
             #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
             self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
             self.basic_parameters.append(self.rel_h)
@@ -366,8 +382,10 @@ class SDPBiaffineParser(nn.Module):
         if self.language_embed is not None:
             nn.init.uniform_(self.language_embed.weight, -0.1, 0.1)
         # 初始化embedding Jeffrey
-        nn.init.uniform_(self.labels_ebbed.weight,-0.1,0.1)
-        nn.init.uniform_(self.pattern_ebbed.weight,-0.1,0.1)
+        if self.labels_ebbed is not None:
+            nn.init.uniform_(self.labels_ebbed.weight,-0.1,0.1)
+        if self.pattern_ebbed is not None:
+            nn.init.uniform_(self.pattern_ebbed.weight,-0.1,0.1)
         with torch.no_grad():
             if self.pretrained_word_embed is not None:
                 self.pretrained_word_embed.weight[self.pretrained_word_embed.padding_idx].fill_(0)
@@ -377,8 +395,10 @@ class SDPBiaffineParser(nn.Module):
                 self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
-            self.labels_ebbed.weight[0].fill_(0)
-            self.pattern_ebbed.weight[0].fill_(0)
+            if self.labels_ebbed is not None:
+                self.labels_ebbed.weight[0].fill_(0)
+            if self.pattern_ebbed is not None:
+                self.pattern_ebbed.weight[0].fill_(0)
 
         if self.arc_mlp_dim != -1 and self.rel_mlp_dim != -1:
             if self.act_func == 'leaky_relu':
@@ -517,7 +537,8 @@ class SDPBiaffineParser(nn.Module):
 
         # apply dropout for output
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
-        output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
+        # 放在外卖进行dropout_out
+        #output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
         self.encoder_output = output
         return output, ht
 
@@ -537,8 +558,9 @@ class SDPBiaffineParser(nn.Module):
         # apply dropout on arc
         # [batch, length, dim] --> [batch, 2 * length, dim]
         arc = torch.cat([arc_h, arc_c], dim=1)
-        arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
-        arc_h, arc_c = arc.chunk(2, 1)
+        arc = self.dropout_out(arc.transpose(1, 3)).transpose(1, 3)
+        arc_h, arc_c = arc.chunk(2,1)
+
 
         return arc_h, arc_c
 
@@ -558,7 +580,7 @@ class SDPBiaffineParser(nn.Module):
         # apply dropout on rel
         # [batch, length, dim] --> [batch, 2 * length, dim]
         rel = torch.cat([rel_h, rel_c], dim=1)
-        rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
+        rel = self.dropout_out(rel.transpose(1, 3)).transpose(1, 3)
         rel_h, rel_c = rel.chunk(2, 1)
         rel_h = rel_h.contiguous()
         rel_c = rel_c.contiguous()
@@ -638,7 +660,7 @@ class SDPBiaffineParser(nn.Module):
                 bpes=None, first_idx=None, input_elmo=None, mask=None, lan_id=None,
                 src_heads=None, src_types=None,
                 origin_heads=None,origin_types=None,
-                info1=None,info2=None):
+                info1=None,info2=None,is_node=False,is_par=False,is_pattern=False):
         # Pre-process
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
@@ -663,6 +685,8 @@ class SDPBiaffineParser(nn.Module):
         # 需要解决nan
         node_labeling = node_labeling.div(head_num.unsqueeze(-1).float())  #每个节点label的平均
         node_labeling = torch.where(torch.isnan(node_labeling),torch.full_like(node_labeling,0),node_labeling)
+        node_labeling = node_labeling.unsqueeze(2).repeat(1,1,seq_len,1)
+        node_labeling = torch.cat((node_labeling,node_labeling.transpose(1,2)),dim=-1)
         # (batch,seq_len,seq_len) distant_embedding
         # (batch,seq_len,seq_len,seq_len) nearest_par_labeling
         # nearest_par_labeling,distant_embedding = self.get_neaest_par(origin_heads)
@@ -674,10 +698,22 @@ class SDPBiaffineParser(nn.Module):
         nearest_par_embedd = torch.where(torch.isnan(nearest_par_embedd), torch.full_like(nearest_par_embedd, 0), nearest_par_embedd)
         distant_embedd = self.pattern_ebbed(distant_embedding.long())
         # 进行embedding 合并
-        merge1 = torch.cat((encoder_output_i,node_labeling.unsqueeze(2).repeat(1,1,seq_len,1)),dim=-1)
-        merge2 = torch.cat((merge1,nearest_par_embedd),dim=-1)
-        embedding_i = torch.cat((merge2,distant_embedd),dim=-1)
-        embedding_j = torch.cat((merge2,distant_embedd.transpose(1,2)),dim=-1)
+        embedding_i = encoder_output_i
+        embedding_j = encoder_output_i.transpose(1,2)
+        if is_node:
+            embedding_i = torch.cat((embedding_i, node_labeling), dim=-1)
+            embedding_j = torch.cat((embedding_j, node_labeling.transpose(1,2)), dim=-1)
+        if is_par:
+            embedding_i = torch.cat((embedding_i, nearest_par_embedd), dim=-1)
+            embedding_j = torch.cat((embedding_j, nearest_par_embedd.transpose(1,2)), dim=-1)
+        if is_pattern:
+            embedding_i = torch.cat((embedding_i, distant_embedd), dim=-1)
+            embedding_j = torch.cat((embedding_j, distant_embedd.transpose(1,2)), dim=-1)
+
+        # dropout
+        total_embedding = torch.cat([embedding_i, embedding_j], dim=1)
+        total_embedding = self.dropout_out(total_embedding.transpose(1, 3)).transpose(1, 3)
+        embedding_i, embedding_j = total_embedding.chunk(2, 1)
 
 
         # ***********pattern embedding ***********
@@ -686,7 +722,7 @@ class SDPBiaffineParser(nn.Module):
         arc_h, arc_c = self._arc_mlp(embedding_i,embedding_j)
 
         # (batch, seq_len, seq_len)
-        arc_logits = self.arc_attention(arc_c, arc_h.transpose(1,2),seq_len)
+        arc_logits = self.arc_attention(arc_c, arc_h,seq_len)
         # arc_attention1 jeffrey 2021-9-12
         # arc_embedding = self.arc_ebbed((origin_heads>0).type(torch.long))
         # arc_logits1 = arc_embedding @ torch.unsqueeze(arc_c,-1)
@@ -697,7 +733,7 @@ class SDPBiaffineParser(nn.Module):
         # (batch, length, rel_mlp_dim)
         rel_h, rel_c = self._rel_mlp(embedding_i,embedding_j)
         # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.rel_attention(rel_c, rel_h.transpose(1,2),seq_len)
+        rel_logits = self.rel_attention(rel_c, rel_h,seq_len)
         # rel_attention1 jeffrey 2021-9-12
 
         # rel_embedding = self.labels_ebbed(origin_types)
@@ -735,7 +771,8 @@ class SDPBiaffineParser(nn.Module):
 
     def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None,
                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0,target_mask=None,
-               src_heads=None, src_types=None,origin_heads=None,origin_types=None,info1=None,info2=None):
+               src_heads=None, src_types=None,origin_heads=None,origin_types=None,info1=None,info2=None,
+               is_node=False,is_par=False,is_pattern=False):
         """
         Args:
             input_word: Tensor
@@ -780,6 +817,8 @@ class SDPBiaffineParser(nn.Module):
         # 需要解决nan
         node_labeling = node_labeling.div(head_num.unsqueeze(-1).float())  # 每个节点label的平均
         node_labeling = torch.where(torch.isnan(node_labeling), torch.full_like(node_labeling, 0), node_labeling)
+        node_labeling = node_labeling.unsqueeze(2).repeat(1, 1, seq_len, 1)
+        node_labeling = torch.cat((node_labeling, node_labeling.transpose(1, 2)), dim=-1)
         # (batch,seq_len,seq_len) distant_embedding
         # (batch,seq_len,seq_len,seq_len) nearest_par_labeling
         #nearest_par_labeling, distant_embedding = self.get_neaest_par(origin_heads)
@@ -791,23 +830,35 @@ class SDPBiaffineParser(nn.Module):
         nearest_par_embedd = torch.where(torch.isnan(nearest_par_embedd), torch.full_like(nearest_par_embedd, 0), nearest_par_embedd)
         distant_embedd = self.pattern_ebbed(distant_embedding.long())
         # 进行embedding 合并
-        merge1 = torch.cat((encoder_output_i, node_labeling.unsqueeze(2).repeat(1, 1, seq_len, 1)), dim=-1)
-        merge2 = torch.cat((merge1, nearest_par_embedd), dim=-1)
-        embedding_i = torch.cat((merge2, distant_embedd), dim=-1)
 
-        embedding_j = torch.cat((merge2, distant_embedd.transpose(1, 2)), dim=-1)
+        embedding_i=encoder_output_i
+        embedding_j=encoder_output_i.transpose(1,2)
+        if is_node:
+            embedding_i = torch.cat((embedding_i, node_labeling), dim=-1)
+            embedding_j = torch.cat((embedding_j, node_labeling.transpose(1,2)), dim=-1)
+        if is_par:
+            embedding_i = torch.cat((embedding_i, nearest_par_embedd), dim=-1)
+            embedding_j = torch.cat((embedding_j, nearest_par_embedd.transpose(1,2)), dim=-1)
+        if is_pattern:
+            embedding_i = torch.cat((embedding_i, distant_embedd), dim=-1)
+            embedding_j = torch.cat((embedding_j, distant_embedd.transpose(1,2)), dim=-1)
 
+
+        # dropout
+        total_embedding = torch.cat([embedding_i, embedding_j], dim=1)
+        total_embedding = self.dropout_out(total_embedding.transpose(1, 3)).transpose(1, 3)
+        embedding_i, embedding_j = total_embedding.chunk(2, 1)
 
         # (batch, seq_len, arc_mlp_dim)
         arc_h, arc_c = self._arc_mlp(embedding_i,embedding_j)
         # (batch, seq_len, seq_len)
 
-        arc_logits = self.arc_attention(arc_c, arc_h.transpose(1,2),seq_len)
+        arc_logits = self.arc_attention(arc_c,arc_h,seq_len)
 
         # (batch, length, rel_mlp_dim)
         rel_h, rel_c = self._rel_mlp(embedding_i,embedding_j)
         # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.rel_attention(rel_c, rel_h.transpose(1,2),seq_len)
+        rel_logits = self.rel_attention(rel_c,rel_h,seq_len)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
         #rel_logits = rel_logits.permute(0, 3, 2, 1)
