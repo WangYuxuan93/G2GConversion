@@ -605,6 +605,7 @@ def train(args):
     logger.info("constructing network...")
 
     hyps = json.load(open(args.config, 'r'))
+    hyps['model_transfer']=args.model_transfer
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
