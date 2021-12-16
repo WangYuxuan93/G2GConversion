@@ -1,10 +1,11 @@
 __author__ = 'max'
 
 from neuronlp2.io.instance import Sentence
-from neuronlp2.io.common import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE
+from neuronlp2.io.common import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE, PAD_TYPE, PAD
 from neuronlp2.io.common import DIGIT_RE, MAX_CHAR_LENGTH
 from neuronlp2.mappings.ud_mapping import ud_v2_en_label_mapping
 import re
+
 
 class G2GInstance(object):
     def __init__(self, sentence, postags, pos_ids, heads, types, type_ids, src_heads, src_types, src_type_ids):
@@ -24,13 +25,14 @@ class G2GInstance(object):
 
 
 class CoNLLUReaderG2G(object):
-    def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=None, pos_idx=4):
+    def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=None, pos_idx=4, source_alphabet_rels=None):
         self.__source_file = open(file_path, 'r')
         self.__word_alphabet = word_alphabet
         self.__char_alphabet = char_alphabet
         self.__pos_alphabet = pos_alphabet
         self.__type_alphabet = type_alphabet
         self.__pre_alphabet = pre_alphabet
+        self.__old_alphabet = source_alphabet_rels
         self.pos_idx = pos_idx
 
     def close(self):
@@ -88,7 +90,7 @@ class CoNLLUReaderG2G(object):
             char_id_seqs.append([self.__char_alphabet.get_index(ROOT_CHAR), ])
             postags.append(ROOT_POS)
             pos_ids.append(self.__pos_alphabet.get_index(ROOT_POS))
-            types.append([]) # Jeffrey: heads and types should be a list
+            types.append([])  # Jeffrey: heads and types should be a list
             type_ids.append([])
             heads.append([])
             # source graph
@@ -113,53 +115,64 @@ class CoNLLUReaderG2G(object):
             char_id_seqs.append(char_ids)
             word = tokens[1]
             pos = tokens[self.pos_idx]
-            
+
             headlist = []
             typelist = []
             for x in tokens[8].split("|"):
                 if x != '_':
-                    p = x.split(":",1)
+                    p = x.split(":", 1)
                     headlist.append(int(p[0]))
                     typelist.append(p[1])
             heads.append(headlist)
             types.append(typelist)
             #  exception:
-            temp=[]
+            temp = []
             for type in typelist:
                 try:
                     temp_type = self.__type_alphabet.get_index(type)
                     temp.append(temp_type)
                 except:
-                    temp_type = self.__type_alphabet.get_index(ROOT_TYPE)  # Jeffrey type不存在的情况
+                    temp_type = self.__type_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
                     # temp_type = self.__type_alphabet.next_index
                     # self.__type_alphabet.next_index +=1
-                    print("【ERROR arc_type:%s】"%type)
+                    print("【ERROR arc_type:%s】" % type)
                     temp.append(temp_type)
             type_ids.append(temp)
 
             # source graph
+            src_temp = []
             src_headlist = []
             src_typelist = []
             for x in tokens[9].split("|"):
                 if x != '_':
-                    p = x.split(":",1) #EMNLP论文中的原始代码并没有改过来，可能原因在于GAT没用利用弧上的标签信息
+                    p = x.split(":", 1)  # EMNLP论文中的原始代码并没有改过来，可能原因在于GAT没用利用弧上的标签信息
                     src_headlist.append(int(p[0]))
                     src_typelist.append(p[1])
             src_heads.append(src_headlist)
             src_types.append(src_typelist)
-            src_temp=[]
+            # for type in src_typelist:
+            #     try:
+            #         temp_type = ud_v2_en_label_mapping[type]
+            #         src_temp.append(temp_type)
+            #     except:
+            #         temp_type = ud_v2_en_label_mapping["<PAD>"]
+            #         # temp_type = self.__type_alphabet.next_index
+            #         # self.__type_alphabet.next_index +=1
+            #         print("【ERROR arc_type:%s】"%type)
+            #         src_temp.append(temp_type)
+            # src_type_ids.append(src_temp)
+            # jeffrey 2021-9-12
             for type in src_typelist:
                 try:
-                    temp_type = ud_v2_en_label_mapping[type]
+                    temp_type = self.__old_alphabet.get_index(type)
                     src_temp.append(temp_type)
                 except:
-                    temp_type = ud_v2_en_label_mapping["<PAD>"]
+                    temp_type = self.__old_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
                     # temp_type = self.__type_alphabet.next_index
                     # self.__type_alphabet.next_index +=1
-                    print("【ERROR arc_type:%s】"%type)
+                    print("【ERROR arc_type:%s】" % type)
                     src_temp.append(temp_type)
             src_type_ids.append(src_temp)
-
             # save original word in words (data['SRC']), to recover this for normalize_digits=True
             words.append(word)
             word = DIGIT_RE.sub("0", word) if normalize_digits else word
@@ -193,5 +206,4 @@ class CoNLLUReaderG2G(object):
                 pres.append(END)
                 pre_ids.append(self.__pre_alphabet.get_index(END))
 
-        return G2GInstance(Sentence(words, word_ids, char_seqs, char_id_seqs, pres=pres, pre_ids=pre_ids, lines=lines), 
-                            postags, pos_ids, heads, types, type_ids, src_heads, src_types, src_type_ids)
+        return G2GInstance(Sentence(words, word_ids, char_seqs, char_id_seqs, pres=pres, pre_ids=pre_ids, lines=lines), postags, pos_ids, heads, types, type_ids, src_heads, src_types, src_type_ids)

@@ -20,7 +20,7 @@
   "vocab_size": 50265,
   "fusion_type": "residual",
   "graph": {
-    "encoder": "GAT",
+    "encoder": "GCN",
     "structured_layers": null,
     "data_flow": "c2h",
     "use_output_layer": false,

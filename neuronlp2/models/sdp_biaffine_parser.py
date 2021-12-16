@@ -21,7 +21,8 @@ from transformers import *
 import itertools
 from neuronlp2.nn.cpg_lstm import CPG_LSTM
 from neuronlp2.models.semsyn_roberta import SemSynRobertaConfig, SemSynRobertaModel
-
+from neuronlp2.models.graph import initialize_bertgraph
+from neuronlp2.models.graphroberta import initialize_robertagraph
 
 class PositionEmbeddingLayer(nn.Module):
 	def __init__(self, embedding_size, dropout_prob=0, max_position_embeddings=256):
@@ -67,7 +68,7 @@ class SDPBiaffineParser(nn.Module):
 				 embedd_word=None, embedd_char=None, embedd_pos=None,
 				 use_pretrained_static=True, use_random_static=False,
 				 use_elmo=False, elmo_path=None, 
-				 pretrained_lm='none', lm_path=None, lm_config=None, num_src_labels=52,
+				 pretrained_lm='none', lm_path=None, lm_config=None,
 				 num_lans=1, log_name='Network',method="none",old_label=1):
 		super(SDPBiaffineParser, self).__init__()
 		self.hyps = hyps
@@ -120,13 +121,24 @@ class SDPBiaffineParser(nn.Module):
 		self.lm_parameters = []
 		# for Pretrained LM
 		if self.pretrained_lm == 'sroberta':
-			config = SemSynRobertaConfig.from_pretrained(lm_config)
-			config.graph["num_rel_labels"] = num_src_labels
-			self.lm_encoder = SemSynRobertaModel.from_pretrained(lm_path, config=config)
-			self.lm_parameters.append(self.lm_encoder)
-			logger.info("[LM] Pretrained Language Model Type: SemSynRoberta")
-			logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
-			lm_hidden_size = self.lm_encoder.config.hidden_size
+			if method=="G2GTr":
+				self.lm_encoder = initialize_robertagraph(lm_path, layernorm_key=True, layernorm_value=False, input_label_graph=True, input_unlabel_graph=False, label_size=old_label-1)
+				logger.info("Graph to Graph Transfomers Encoder")
+				layernorm_params = ['layernorm_key_layer', 'layernorm_value_layer', 'dp_relation_k', 'dp_relation_v']
+				for name, param in self.lm_encoder.named_parameters():
+					if not any(nd in name for nd in layernorm_params):
+						self.lm_parameters.append(param)
+					else:
+						self.basic_parameters.append(param)
+				lm_hidden_size = self.lm_encoder.config.hidden_size
+			else:
+				config = SemSynRobertaConfig.from_pretrained(lm_config)
+				config.graph["num_rel_labels"] = old_label
+				self.lm_encoder = SemSynRobertaModel.from_pretrained(lm_path, config=config)
+				self.lm_parameters.append(self.lm_encoder)
+				logger.info("[LM] Pretrained Language Model Type: SemSynRoberta")
+				logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
+				lm_hidden_size = self.lm_encoder.config.hidden_size
 		elif self.pretrained_lm != 'none':
 			self.lm_encoder = AutoModel.from_pretrained(lm_path)
 			self.lm_parameters.append(self.lm_encoder)
@@ -304,7 +316,7 @@ class SDPBiaffineParser(nn.Module):
 			self.arc_h = nn.Linear(hid_size, self.arc_mlp_dim)
 			self.arc_c = nn.Linear(hid_size, self.arc_mlp_dim)
 			#self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
-			if self.method == "linear":
+			if self.method == "GGLT":
 				self.arc_attention = BiAffine_transfer(self.arc_mlp_dim,bias_x=True,bias_y=False)
 			else:
 				self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
@@ -319,7 +331,7 @@ class SDPBiaffineParser(nn.Module):
 			self.rel_h = nn.Linear(hid_size, self.rel_mlp_dim)
 			self.rel_c = nn.Linear(hid_size, self.rel_mlp_dim)
 			#self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
-			if self.method =="linear":
+			if self.method =="GGLT":
 				self.rel_attention = BiAffine_transfer(self.rel_mlp_dim,n_out_old=self.old_label,n_out_new=self.num_labels,bias_x=True,bias_y=True)
 			else:
 				self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
@@ -335,9 +347,15 @@ class SDPBiaffineParser(nn.Module):
 		# 	self.basic_parameters.append(self.yes_no_w)
 
 	def _basic_parameters(self):
-		params = [p.parameters() for p in self.basic_parameters]
-		#print (params)
-		return itertools.chain(*params)
+
+		params = []
+		for p in self.basic_parameters:
+			try:
+				for name,x in p.named_parameters():
+					params.append(x)
+			except:
+				params.append(p)
+		return params
 
 	def _lm_parameters(self):
 		if not self.lm_parameters:
@@ -345,8 +363,14 @@ class SDPBiaffineParser(nn.Module):
 		if len(self.lm_parameters) == 1:
 			return self.lm_parameters[0].parameters()
 		else:
-			params = [p.parameters() for p in self.lm_parameters]
-			return itertools.chain(*params)
+			params=[]
+			for p in self.lm_parameters:
+				try:
+					for name,x in p.named_parameters():
+						params.append(x)
+				except:
+					params.append(p)
+			return params
 
 	def reset_parameters_add(self):
 		"""
@@ -402,7 +426,7 @@ class SDPBiaffineParser(nn.Module):
 			nn.init.constant_(self.input_encoder.bias, 0.)
 
 
-	def _lm_embed(self, input_ids=None, first_index=None, src_heads=None, src_types=None, debug=False):
+	def _lm_embed(self, input_ids=None, first_index=None, src_heads=None, src_types=None, debug=False,method=None):
 		"""
 		Input:
 			input_ids: (batch, max_bpe_len)
@@ -411,12 +435,17 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, max_bpe_len, hidden_size)
 		if src_heads is not None and src_types is not None:
 			# (batch, max_bpe_len, hidden_size)
-			lm_output = self.lm_encoder(input_ids, heads=src_heads, rels=src_types)[0]
+			if method=="G2GTr":
+				# input_ids = torch.gather(input_ids,-1,first_index)
+				lm_output = self.lm_encoder(input_ids,graph_arc=src_types,)[0]
+			else:
+				lm_output = self.lm_encoder(input_ids, heads=src_heads, rels=src_types)[0]
 		else:
 			# (batch, max_bpe_len, hidden_size)
 			lm_output = self.lm_encoder(input_ids)[0]
 		size = list(first_index.size()) + [lm_output.size()[-1]]
 		# (batch, seq_len, hidden_size)
+
 		output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
 		if debug:
 			print (lm_output.size())
@@ -425,7 +454,7 @@ class SDPBiaffineParser(nn.Module):
 
 
 	def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 
-				first_idx=None, input_elmo=None, lan_id=None, src_heads=None, src_types=None):
+				first_idx=None, input_elmo=None, lan_id=None, src_heads=None, src_types=None,method=None):
 		batch_size, seq_len = input_word.size()
 		word_embeds = []
 		if self.random_word_embed is not None:
@@ -438,7 +467,7 @@ class SDPBiaffineParser(nn.Module):
 				pretrained_embed = self.pretrained_word_embed(input_pretrained)
 			word_embeds.append(pretrained_embed)
 		if self.lm_encoder is not None:
-			lm_embed = self._lm_embed(bpes, first_idx, src_heads=src_heads, src_types=src_types)
+			lm_embed = self._lm_embed(bpes, first_idx, src_heads=src_heads, src_types=src_types,method=method)
 			word_embeds.append(lm_embed)
 		if self.elmo_encoder is not None:
 			elmo_embed = self.elmo_encoder(input_elmo)['elmo_representations'][0]
@@ -618,7 +647,7 @@ class SDPBiaffineParser(nn.Module):
 
 	def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, 
 				bpes=None, first_idx=None, input_elmo=None, mask=None, lan_id=None,
-				src_heads=None, src_types=None):
+				src_heads=None, src_types=None,_src_heads=None,_src_types=None,method=None):
 		# Pre-process
 		batch_size, seq_len = input_word.size()
 		# (batch, seq_len), seq mask, where at position 0 is 0
@@ -627,9 +656,10 @@ class SDPBiaffineParser(nn.Module):
 		mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
 
 		# (batch, seq_len, embed_size)
-		embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
+
+		embeddings = self._embed(input_word, input_pretrained, input_char, input_pos,
 								bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
-								src_heads=src_heads, src_types=src_types)
+								src_heads=src_heads, src_types=src_types,method=method)
 		# (batch, seq_len, hidden_size)
 		encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
 
@@ -672,7 +702,7 @@ class SDPBiaffineParser(nn.Module):
 
 	def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
 			   bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0,target_mask=None,
-			   src_heads=None, src_types=None):
+			   src_heads=None, src_types=None,_src_heads=None,_src_types=None,method=None):
 		"""
 		Args:
 			input_word: Tensor
@@ -701,9 +731,9 @@ class SDPBiaffineParser(nn.Module):
 		root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
 		mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
 		# (batch, seq_len, embed_size)
-		embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
-								bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
-								src_heads=src_heads, src_types=src_types)
+
+		embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, src_heads=src_heads,
+								 src_types=src_types,method=method)
 		# (batch, seq_len, hidden_size)
 		encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
 

@@ -197,10 +197,10 @@ class BiAffine(nn.Module):
             output = output * mask_key.unsqueeze(1)
         return output
 
-    @overrides
-    def extra_repr(self):
-        s = '{key_dim}, {query_dim}'
-        return s.format(**self.__dict__)
+    # @overrides
+    # def extra_repr(self):
+    #     s = '{key_dim}, {query_dim}'
+    #     return s.format(**self.__dict__)
 
 class CharCNN(nn.Module):
     """

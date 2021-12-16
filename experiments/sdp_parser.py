@@ -44,7 +44,7 @@ from neuronlp2.io.common import PAD, ROOT, END
 from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
 from neuronlp2.io.alphabet import Alphabet
-from neuronlp2.mappings.ud_mapping import ud_v2_en_label_mapping
+from neuronlp2.io.common import INTER_TYPE
 
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
@@ -66,7 +66,7 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
     return optimizer, scheduler
 
 
-def expand_graph(source_heads, source_rels, wid2tid_list, max_length, expand_type="copy-word", debug=False):
+def expand_graph(source_heads, source_rels, wid2tid_list, max_length, expand_type="copy-word", debug=False,inter_type=1):
     src_t_heads_list = []
     src_t_rels_list = []
     for i in range(len(source_heads)):
@@ -105,7 +105,7 @@ def expand_graph(source_heads, source_rels, wid2tid_list, max_length, expand_typ
                     start_id = tids[0]
                     for cid in tids[1:]:
                         src_t_heads[cid][start_id] = 1
-                        src_t_rels[cid][start_id] = ud_v2_en_label_mapping["<WORD>"]
+                        src_t_rels[cid][start_id] = inter_type
             if debug:
                 print("src_t_heads (word arc):\n", src_t_heads)
                 print("src_t_rels (word arc):\n", src_t_rels)  # exit()
@@ -117,7 +117,7 @@ def expand_graph(source_heads, source_rels, wid2tid_list, max_length, expand_typ
     rels = torch.stack(src_t_rels_list, dim=0)
     return heads, rels
 
-def prepare_input(tokenizer, tokens, src_heads, src_types, debug=False):
+def prepare_input(tokenizer, tokens, src_heads, src_types, debug=False,inter_type=1):
 
     all_wordpiece_list = []
     all_first_index_list = []
@@ -155,7 +155,7 @@ def prepare_input(tokenizer, tokens, src_heads, src_types, debug=False):
 
     max_wp_len = max([len(w) for w in all_wordpiece_list])
 
-    expand_src_heads, expand_src_rels = expand_graph(src_heads, src_types, wid2tid_list, max_length=max_wp_len)
+    expand_src_heads, expand_src_rels = expand_graph(src_heads, src_types, wid2tid_list, max_length=max_wp_len,inter_type=inter_type)
 
     all_wordpiece = np.stack(
           [np.pad(a, (0, max_wp_len - len(a)), 'constant', constant_values=tokenizer.pad_token_id) for a in all_wordpiece_list])
@@ -219,7 +219,7 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=1, batch_size=256, write_to_tmp=True, prev_LF=0.0, pred_filename=None, tokenizer=None,
-         multi_lan_iter=False, ensemble=False, write_signal=False, target_mask=None):
+         multi_lan_iter=False, ensemble=False, write_signal=False, target_mask=None,method=None,num_source_rels=1,rel_alphabet_source=None):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -304,19 +304,32 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         if pretrained_lm == "sroberta":
             _src_heads = data['SRC_HEAD']
             _src_types = data['SRC_TYPE']
-            bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
+            INTER_TYPE_NUM = rel_alphabet_source.get_index(INTER_TYPE)
+            bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types,inter_type=INTER_TYPE_NUM)
             bpes = bpes.to(device)
+            if method == "G2GTr":
+                batch_size_here, slen, slen = src_types.shape
+                src_types = src_types.transpose(1, 2)
+                for x in range(batch_size_here):
+                    for y in range(slen):
+                        for z in range(slen):
+                            if src_types[x, y, z] > 0 and src_types[x, z, y] == 0:
+                                src_types[x, z, y] = src_types[x, y, z] + num_source_rels - 1
             first_idx = first_idx.to(device)
             src_heads = src_heads.to(device)
             src_types = src_types.to(device)
+            _src_heads = _src_heads.to(device)
+            _src_types = _src_types.to(device)
         elif pretrained_lm != "none":
             src_heads, src_types = None, None
+            _src_heads, _src_types = None, None
             bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
         else:
             bpes = first_idx = None
             src_heads, src_types = None, None
+            _src_heads, _src_types = None, None
         if ensemble:
             words = [words]
             chars = [chars]
@@ -335,7 +348,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             err_types = None
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
                                                    leading_symbolic=common.NUM_SYMBOLIC_TAGS, target_mask=target_mask,
-                                                   src_heads=src_heads, src_types=src_types)
+                                                   src_heads=src_heads, src_types=src_types,_src_heads=_src_heads,_src_types=_src_types,method=method)
         else:
             pres = None
             err_types = None
@@ -509,7 +522,7 @@ def train(args):
     only_pretrain_static = use_pretrained_static and not use_random_static
     use_elmo = args.use_elmo
     elmo_path = args.elmo_path
-
+    G2GTYPE=args.G2GTYPE
     print(args)
 
     word_dict, word_dim = utils.load_embedding_dict(word_embedding, word_path)
@@ -533,9 +546,17 @@ def train(args):
     elif data_format == "ud":
         # data_paths=dev_path + test_path
         data_paths = dev_path
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
+    if pretrained_lm == "sroberta":
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_source, rel_alphabet = conllx_data.create_alphabets_pattern(alphabet_path, train_path, data_paths=data_paths,
+                                                                                                                                 embedd_dict=word_dict, max_vocabulary_size=args.max_vocab_size,
+                                                                                                                                 normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+                                                                                                                                 expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+
+    else:
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
                                                                                             max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
                                                                                             expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
     num_words = word_alphabet.size()
@@ -543,12 +564,18 @@ def train(args):
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_rels = rel_alphabet.size()
-
+    if pretrained_lm == "sroberta":
+        num_source_rels = rel_alphabet_source.size()
+    else:
+        num_source_rels = args.old_labels
+    if pretrained_lm != "sroberta":
+        rel_alphabet_source = None
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Rel Alphabet Size: %d" % num_rels)
+    logger.info("Source Rel Alphabet Size: %d"%num_source_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -605,7 +632,7 @@ def train(args):
     logger.info("constructing network...")
 
     hyps = json.load(open(args.config, 'r'))
-    hyps['model_transfer']=args.model_transfer
+    hyps['g2gtype']=G2GTYPE
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
@@ -636,14 +663,10 @@ def train(args):
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if model_type == 'Biaffine':
-        if args.model_transfer =="linear":
-            network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
-                                        use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                        lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,method=args.model_transfer,old_label=args.old_labels)
-        else:
-            network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
-                                        use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
-                                        lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans)
+        network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
+                                    use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
+                                    lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,method=G2GTYPE,old_label=num_source_rels)
+
 
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
@@ -737,18 +760,21 @@ def train(args):
             # optimizer.load_state_dict(pre_dict['optimizer'])
 
     n = 0
-    for para in network.parameters():
-        n += 1
+    # for para in network.parameters():
+    #     print(para)
+    #     n += 1
+    for name, para in network.named_parameters():
+        print(name)
+        n+=1
     print("num params = ", n)
     logger.info("Reading Data")
 
     if alg == 'graph':
         if pretrained_lm=="sroberta":
-
             data_train = conllu_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,source_alphabet_rels=rel_alphabet_source)
             data_dev = conllu_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                             pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                                             pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,source_alphabet_rels=rel_alphabet_source)
         else:
             data_train = data_reader.read_bucketed_data_sdp(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                             pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
@@ -759,7 +785,7 @@ def train(args):
         else:
             if pretrained_lm=="sroberta":
                 data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,source_alphabet_rels=rel_alphabet_source)
 
             else:
                 data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
@@ -850,12 +876,12 @@ def train(args):
         multi_lan_iter = True
     else:
         if pretrained_lm =="sroberta":
-
             iterate = iterate_data_g2g
         else:
             iterate = iterate_data
         multi_lan_iter = False
         lan_id = None
+    batch_step = 0
     for epoch in range(1, num_epochs + 1):
         num_epochs_without_improvement += 1
         start_time = time.time()
@@ -876,7 +902,9 @@ def train(args):
         # if args.cuda:
         #    torch.cuda.empty_cache()
         gc.collect()
+
         # for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
+
         for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True, task_type="sdp")):
             if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
                 lan_id, data = data
@@ -905,11 +933,24 @@ def train(args):
 
                 _src_heads = data['SRC_HEAD']
                 _src_types = data['SRC_TYPE']
-                bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
+                INTER_TYPE_NUM=rel_alphabet_source.get_index(INTER_TYPE)
+                bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types,inter_type=INTER_TYPE_NUM)
                 bpes = bpes.to(device)
+
+                if G2GTYPE == "G2GTr":
+                    batch_size_here,slen,slen=src_types.shape
+                    src_types = src_types.transpose(1,2)
+                    for x in range(batch_size_here):
+                        for y in range(slen):
+                            for z in range(slen):
+                                if src_types[x,y,z]>0 and src_types[x,z,y]==0:
+                                    src_types[x,z,y] = src_types[x,y,z]+num_source_rels-1
+
                 first_idx = first_idx.to(device)
                 src_heads = src_heads.to(device)
                 src_types = src_types.to(device)
+                _src_heads = _src_heads.to(device)
+                _src_types = _src_types.to(device)
                 try:
                     assert first_idx.size() == words.size()
                 except:
@@ -919,6 +960,7 @@ def train(args):
                     print("words:{},\n{}".format(words.size(), words))
             elif pretrained_lm != "none":
                 src_heads, src_types = None, None
+                _src_heads, _src_types = None, None
                 bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
                 bpes = bpes.to(device)
                 first_idx = first_idx.to(device)
@@ -932,13 +974,14 @@ def train(args):
             else:
                 bpes = first_idx = None
                 src_heads, src_types = None, None
+                _src_heads, _src_types = None, None
             if alg == 'graph':
                 pres = data['PRETRAINED'].to(device)
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
                 losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
-                                             src_heads=src_heads, src_types=src_types)
+                                             src_heads=src_heads, src_types=src_types,_src_heads=_src_heads,_src_types=_src_types,method=G2GTYPE)
             else:
                 pres = None
                 masks_enc = data['MASK_ENC'].to(device)
@@ -996,7 +1039,6 @@ def train(args):
             else:
                 optimizer.step()
                 scheduler.step()
-
                 with torch.no_grad():
                     num_insts += nbatch
                     num_words += nwords
@@ -1021,6 +1063,7 @@ def train(args):
                     sys.stdout.write(log_info)
                     sys.stdout.flush()
                     num_back = len(log_info)
+            batch_step +=1
         if not noscreen:
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
@@ -1069,7 +1112,8 @@ def train(args):
 
                     print('Evaluating dev:')
                     dev_stats, dev_stats_nopunct, dev_stats_root, f1_score = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                        batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=best_type_f)
+                        batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=best_type_f,
+                                                                                  method=G2GTYPE,num_source_rels=num_source_rels,rel_alphabet_source=rel_alphabet_source)
 
                     # pred_writer.close()
                     # gold_writer.close()
@@ -1165,12 +1209,12 @@ def train(args):
                             logger.info("加载的模型保存了optimizer")  # 不需要初始化optimizer
                         scheduler.reset_state()
                         patient = 0
-
             if num_epochs_without_improvement >= patient_epochs:
                 print('Evaluating test:')
                 if data_test:
                     test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
-                                                                                     beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0)
+                                                                                     beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
+                                                                                     method=G2GTYPE,num_source_rels=num_source_rels,rel_alphabet_source=rel_alphabet_source)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -1383,7 +1427,7 @@ def parse(args):
                 data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                       pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
             else:
-                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
 
         elif alg == 'transition':
@@ -1413,7 +1457,7 @@ def parse(args):
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, args.beam, batch_size=args.eval_batch_size, tokenizer=tokenizer,
-             multi_lan_iter=multi_lan_iter, ensemble=args.ensemble,target_mask=target_type_mask)
+             multi_lan_iter=multi_lan_iter, ensemble=args.ensemble)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()  # gold_writer.close()
@@ -1486,8 +1530,9 @@ if __name__ == '__main__':
     args_parser.add_argument('--tol_epoch', type=int, default=0)
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
-    args_parser.add_argument('--model_transfer', type=str, choices=["linear","none"],default='none')
+    # args_parser.add_argument('--model_transfer', type=str, choices=["linear","none"],default='none')
     args_parser.add_argument('--old_labels', type=int,default=0)
+    args_parser.add_argument('--G2GTYPE', type=str, choices=["DFT","TSFT","LS","GGLT","PE","G2GTr","G2G"], default="DFT")
 
     args = args_parser.parse_args()
 

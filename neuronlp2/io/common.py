@@ -10,6 +10,7 @@ DIGIT_RE = re.compile(r"\d")
 PAD = "_PAD"
 PAD_POS = "_PAD_POS"
 PAD_TYPE = "_<PAD>"
+INTER_TYPE="_<INTER>"
 PAD_CHAR = "_PAD_CHAR"
 PAD_CHUNK = "_PAD_CHUNK"
 PAD_NER = "_PAD_NER"
