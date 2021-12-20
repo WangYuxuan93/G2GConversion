@@ -761,6 +761,7 @@ def train(args):
             data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         logger.info("不读取data_test")
+        data_test =None
         # if test_path == "none":
         #     data_test = None
         # else:
