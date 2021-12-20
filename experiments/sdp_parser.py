@@ -761,17 +761,17 @@ def train(args):
             data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         logger.info("不读取data_test")
-        if test_path == "none":
-            data_test = None
-        else:
-            if pretrained_lm=="sroberta":
-                logger.info("Reading test Data")
-                data_test = conllu_data.read_bucketed_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
-
-            else:
-                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                      pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        # if test_path == "none":
+        #     data_test = None
+        # else:
+        #     if pretrained_lm=="sroberta":
+        #         logger.info("Reading test Data")
+        #         data_test = conllu_data.read_bucketed_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+        #                                           pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
+        #
+        #     else:
+        #         data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+        #                                               pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     elif alg == 'transition':
         prior_order = hyps['input']['prior_order']
         data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
@@ -1189,38 +1189,40 @@ def train(args):
                         patient = 0
 
             if num_epochs_without_improvement >= patient_epochs:
-                # logger.info('Start evaluating test:')
-                # logger.info("先清除train和dev")
-                # del data_train
-                # del data_dev
-                # if test_path == "none":
-                #     data_test = None
-                # else:
-                #     if pretrained_lm=="sroberta":
-                #         logger.info("Reading test Data")
-                #         data_test = conllu_data.read_bucketed_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                #                                           pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
-                #
-                #     else:
-                #         data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                #                                               pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-                # if data_test:
-                #     test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
-                #         beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
-                #                                                                      is_node=is_node,is_par=is_par,is_pattern=is_pattern)
-                #
-                #     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
-                #     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
-                #     test_root_correct, test_total_root, test_total_inst = test_stats_root
-                #     test_arc_f = f1_score[0]
-                #     test_type_f = f1_score[1]
-                #     test_arc_p = f1_score[2]
-                #     test_arc_r = f1_score[3]
-                #     test_type_p = f1_score[4]
-                #     test_type_r = f1_score[5]
-                #
-                #     pred_writer.close()
-                # logger.info("End evaluating test")
+                logger.info('Start evaluating test:')
+                logger.info("先清除train和dev")
+                del data_train
+                del data_dev
+                for i in range(20):
+                    torch.cuda.empty_cache()
+                if test_path == "none":
+                    data_test = None
+                else:
+                    if pretrained_lm=="sroberta":
+                        logger.info("Reading test Data")
+                        data_test = conllu_data.read_bucketed_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                          pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
+
+                    else:
+                        data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                              pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                if data_test:
+                    test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                        beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
+                                                                                     is_node=is_node,is_par=is_par,is_pattern=is_pattern)
+
+                    test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                    test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                    test_root_correct, test_total_root, test_total_inst = test_stats_root
+                    test_arc_f = f1_score[0]
+                    test_type_f = f1_score[1]
+                    test_arc_p = f1_score[2]
+                    test_arc_r = f1_score[3]
+                    test_type_p = f1_score[4]
+                    test_type_r = f1_score[5]
+
+                    pred_writer.close()
+                logger.info("End evaluating test")
                 logger.info("More than %d epochs without improvement, exit!" % patient_epochs)
                 exit()
 
