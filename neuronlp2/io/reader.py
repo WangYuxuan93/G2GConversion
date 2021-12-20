@@ -230,7 +230,7 @@ class CoNLLXReaderSDP(object):
             if line.startswith('#'):
                 line = self.__source_file.readline()
                 continue
-            items = line.split()
+            items = line.split("\t")
             if re.match('[0-9]+[-.][0-9]+', items[0]):
                 line = self.__source_file.readline()
                 continue
@@ -288,7 +288,7 @@ class CoNLLXReaderSDP(object):
             typelist = []
             for x in tokens[8].split("|"):
                 if x != '_':
-                    p = x.split(":")
+                    p = x.split(":",1)
                     headlist.append(int(p[0]))
                     typelist.append(p[1])
 
@@ -428,7 +428,7 @@ class CoNLLUReaderSDP(object):
             typelist = []
             for x in tokens[8].split("|"):
                 if x != '_':
-                    p = x.split(":")
+                    p = x.split(":",1)
                     headlist.append(int(p[0]))
                     typelist.append(p[1])
 
