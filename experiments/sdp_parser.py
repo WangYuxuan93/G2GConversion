@@ -1288,9 +1288,9 @@ def parse(args):
             word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = conllx_data.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
                                                                                                                     log_name="Create Alphabets-%d" % i, task_type="sdp")
             pretrained_alphabets[i] = utils.create_alphabet_from_embedding(alphabet_path)
-            # if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
-            #     logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
-            #     exit()
+            if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
+                logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
+                exit()
 
             num_words[i] = word_alphabets[i].size()
             num_chars[i] = char_alphabets[i].size()
