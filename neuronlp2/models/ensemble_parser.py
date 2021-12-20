@@ -36,7 +36,7 @@ class EnsembleParser(nn.Module):
                 hyp = hyps[i]
                 network = SDPBiaffineParser(hyp, num_pretrained[i], num_words[i], num_chars[i], num_pos[i], num_labels[i], device=device, pretrained_lm=pretrained_lm, lm_path=lm_path,
                                          use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, num_lans=num_lans,
-                                         log_name='Network-' + str(len(self.networks)), method=hyp["model_transfer"], old_label=old_label,lm_config=lm_config)
+                                         log_name='Network-' + str(len(self.networks)), method=hyp["g2gtype"], old_label=old_label,lm_config=lm_config)
                 network = network.to(device)
                 network.load_state_dict(torch.load(model_name, map_location=device)["state_dict"], strict=False)
                 self.networks.append(network)
@@ -60,7 +60,7 @@ class EnsembleParser(nn.Module):
 
 
     def decode(self, input_words, input_pretrained, input_chars, input_poss, mask=None, bpes=None, first_idx=None, target_mask=None,input_elmo=None, lan_id=None, leading_symbolic=0, beam=5,
-               src_heads=None, src_types=None):
+               src_heads=None, src_types=None,_src_heads=None,_src_types=None,method=None):
         if self.model_type == "Biaffine":
             if self.merge_by == 'logits':
                 mask_3D= None

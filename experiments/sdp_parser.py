@@ -341,6 +341,9 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
                 words.append(sub_data['WORD'].to(device))
                 chars.append(sub_data['CHAR'].to(device))
                 postags.append(sub_data['POS'].to(device))
+            src_heads, src_types = None, None
+            _src_heads, _src_types = None, None
+
         if alg == 'graph':
             pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
@@ -1259,9 +1262,21 @@ def parse(args):
     punctuation = args.punctuation
     pretrained_lm = args.pretrained_lm
     lm_path = args.lm_path
-
     if args.ensemble:
         model_paths = args.model_path.split(':')
+
+    if args.ensemble:
+        hyps=[]
+        for x in model_paths:
+            hyps.append(json.load(open(os.path.join(x, 'config.json'), 'r')))
+        model_type = hyps[0]['model']
+    else:
+        hyps=json.load(open(os.path.join(args.model_path, 'config.json'), 'r'))
+        model_type = hyps['model']
+    assert model_type in ['Biaffine', 'StackPointer']
+
+    if args.ensemble:
+
         n = len(model_paths)
         word_alphabets, char_alphabets, pos_alphabets, rel_alphabets, pretrained_alphabets = n * [None], n * [None], n * [None], n * [None], n * [None]
         num_words, num_chars, num_pos, num_rels, num_pretrained = n * [None], n * [None], n * [None], n * [None], n * [None]
@@ -1273,9 +1288,9 @@ def parse(args):
             word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = conllx_data.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
                                                                                                                     log_name="Create Alphabets-%d" % i, task_type="sdp")
             pretrained_alphabets[i] = utils.create_alphabet_from_embedding(alphabet_path)
-            if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
-                logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
-                exit()
+            # if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
+            #     logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
+            #     exit()
 
             num_words[i] = word_alphabets[i].size()
             num_chars[i] = char_alphabets[i].size()
@@ -1343,15 +1358,7 @@ def parse(args):
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
     logger.info("loading network...")
-    if args.ensemble:
-        hyps=[]
-        for x in model_paths:
-            hyps.append(json.load(open(os.path.join(x, 'config.json'), 'r')))
-        model_type = hyps[0]['model']
-    else:
-        hyps=json.load(open(os.path.join(model_path, 'config.json'), 'r'))
-        model_type = hyps['model']
-    assert model_type in ['Biaffine', 'StackPointer']
+
 
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
