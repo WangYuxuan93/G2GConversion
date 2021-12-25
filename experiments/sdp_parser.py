@@ -682,9 +682,9 @@ def train(args):
             network.lm_encoder.load_state_dict(torch.load(args.pretrain_roberta, map_location=device))
         else:
             try:
-                network.load_state_dict(torch.load(pretrain, map_location=device))
+                network.load_state_dict(torch.load(os.path.join(pretrain,"model.pt"), map_location=device))
             except:
-                pre_dict = torch.load(pretrain, map_location=device)
+                pre_dict = torch.load(os.path.join(pretrain,"model.pt"), map_location=device)
                 #  ************* do not load attention matrix ****************
                 # now_dict = network.state_dict()
                 # update_dict = {}
@@ -1348,7 +1348,7 @@ def parse(args):
     else:
         target_type_mask = None
 
-    result_path = os.path.join(model_path, 'tmp')
+    result_path = os.path.join(model_path)
     if not os.path.exists(result_path):
         os.makedirs(result_path)
 
@@ -1391,7 +1391,8 @@ def parse(args):
     else:
         if model_type == 'Biaffine':
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                                        use_pretrained_static=args.use_pretrained_static, use_random_static=args.use_random_static, use_elmo=args.use_elmo, elmo_path=args.elmo_path, num_lans=num_lans)
+                                        use_pretrained_static=args.use_pretrained_static, use_random_static=args.use_random_static, use_elmo=args.use_elmo,
+                                        elmo_path=args.elmo_path, num_lans=num_lans,method=args.G2GTYPE,old_label=args.old_labels)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -1451,7 +1452,7 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'mask_pred.txt')
+        pred_filename = os.path.join(args.logpath, 'pred_train.txt')
     pred_writer.start(pred_filename)
     # gold_filename = os.path.join(result_path, 'gold.txt')
     # gold_writer.start(gold_filename)
@@ -1540,7 +1541,7 @@ if __name__ == '__main__':
     # args_parser.add_argument('--model_transfer', type=str, choices=["linear","none"],default='none')
     args_parser.add_argument('--old_labels', type=int,default=0)
     args_parser.add_argument('--G2GTYPE', type=str, choices=["DFT","TSFT","LS","GGLT","PE","G2GTr","G2G"], default="DFT")
-
+    args_parser.add_argument('--logpath', type=str,default="None")
     args = args_parser.parse_args()
 
     if args.mode == 'train':
