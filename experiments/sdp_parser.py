@@ -1259,6 +1259,7 @@ def parse(args):
         exit()
 
     print(args)
+    G2GTYPE=args.G2GTYPE
     punctuation = args.punctuation
     pretrained_lm = args.pretrained_lm
     lm_path = args.lm_path
@@ -1311,7 +1312,13 @@ def parse(args):
         logger.info("Creating Alphabets")
         alphabet_path = os.path.join(model_path, 'alphabets')
         assert os.path.exists(alphabet_path)
-        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, task_type="sdp")
+        if G2GTYPE =="G2GTr":
+            word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_source, rel_alphabet = conllx_data.create_alphabets_pattern(alphabet_path, None,
+                                                                                                                                 normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+                                                                                                                                 task_type="sdp")
+        else:
+            word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, task_type="sdp")
+            rel_alphabet_source = None
         pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
 
         num_words = word_alphabet.size()
@@ -1325,7 +1332,10 @@ def parse(args):
         logger.info("Character Alphabet Size: %d" % num_chars)
         logger.info("POS Alphabet Size: %d" % num_pos)
         logger.info("Rel Alphabet Size: %d" % num_rels)
-
+        if G2GTYPE == "G2GTr":
+            num_source_rels = rel_alphabet_source.size()
+        else:
+            num_source_rels = args.old_labels
     # 生成掩码矩阵，过滤不在目标体系中的标签：
     if args.target != "none":
         count = 0
@@ -1392,7 +1402,7 @@ def parse(args):
         if model_type == 'Biaffine':
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                         use_pretrained_static=args.use_pretrained_static, use_random_static=args.use_random_static, use_elmo=args.use_elmo,
-                                        elmo_path=args.elmo_path, num_lans=num_lans,method=args.G2GTYPE,old_label=args.old_labels)
+                                        elmo_path=args.elmo_path, num_lans=num_lans,method=args.G2GTYPE,old_label=num_source_rels)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -1432,8 +1442,9 @@ def parse(args):
     else:
         if alg == 'graph':
             if pretrained_lm =="sroberta":
-                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                      pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, source_alphabet_rels=rel_alphabet_source)
+
             else:
                 data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
@@ -1465,7 +1476,7 @@ def parse(args):
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, args.beam, batch_size=args.eval_batch_size, tokenizer=tokenizer,
-             multi_lan_iter=multi_lan_iter, ensemble=args.ensemble)
+             multi_lan_iter=multi_lan_iter, ensemble=args.ensemble,rel_alphabet_source=rel_alphabet_source,method=G2GTYPE,num_source_rels=num_source_rels)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()  # gold_writer.close()

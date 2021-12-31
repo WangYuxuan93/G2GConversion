@@ -100,8 +100,10 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                 if re.match('[0-9]+[-.][0-9]+', tokens[0]): continue
                 #if re.match('[0-9]+[-.][0-9]+', line): continue
 
+
                 for char in tokens[1]:
                     char_alphabet.add(char)
+
 
                 word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
                 vocab[word] += 1
