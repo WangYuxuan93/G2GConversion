@@ -1275,7 +1275,8 @@ def parse(args):
         hyps=json.load(open(os.path.join(args.model_path, 'config.json'), 'r'))
         model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
-
+    rel_alphabet_source = None
+    num_source_rels = 0
     if args.ensemble:
 
         n = len(model_paths)
@@ -1305,6 +1306,7 @@ def parse(args):
             logger.info("POS Alphabet Size: %d" % num_pos[i])
             logger.info("Rel Alphabet Size: %d" % num_rels[i])
         model_path = model_paths[0]
+
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
