@@ -1293,7 +1293,10 @@ def parse(args):
         logger.info("Creating Alphabets")
         alphabet_path = os.path.join(model_path, 'alphabets')
         assert os.path.exists(alphabet_path)
-        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, task_type="sdp")
+        if pretrained_lm == "sroberta":
+            word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_source, rel_alphabet = conllx_data.create_alphabets_pattern(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, task_type="sdp")
+        else:
+            word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, task_type="sdp")
         pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
 
         num_words = word_alphabet.size()
@@ -1301,6 +1304,10 @@ def parse(args):
         num_pos = pos_alphabet.size()
         num_rels = rel_alphabet.size()
         num_pretrained = pretrained_alphabet.size()
+        if pretrained_lm == "sroberta":
+            num_src_labels = rel_alphabet_source.size()
+        else:
+            num_src_labels = 0
 
         logger.info("Word Alphabet Size: %d" % num_words)
         logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
@@ -1340,7 +1347,7 @@ def parse(args):
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
     logger.info("loading network...")
-    hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
+    hyps = json.load(open(os.path.join(args.save, 'config.json'), 'r'))
     model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
 
@@ -1361,9 +1368,6 @@ def parse(args):
 
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
 
-
-
-
     if args.ensemble:
         print("Not implemented")
         exit()
@@ -1371,7 +1375,7 @@ def parse(args):
         if model_type == 'Biaffine':
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                         use_pretrained_static=args.use_pretrained_static, use_random_static=args.use_random_static,
-                                        use_elmo=args.use_elmo, elmo_path=args.elmo_path, num_lans=num_lans)
+                                        use_elmo=args.use_elmo, elmo_path=args.elmo_path, num_lans=num_lans,is_node=True,is_par=True,is_pattern=True,num_src_labels=num_src_labels)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -1392,7 +1396,7 @@ def parse(args):
         for i in range(n):
             if alg == 'graph':
                 if pretrained_lm =="sroberta":
-                    data_tests[i] = conllu_data.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i], normalize_digits=args.normalize_digits, symbolic_root=True,
+                    data_tests[i] = conllu_data.read_bucketed_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i], normalize_digits=args.normalize_digits, symbolic_root=True,
                                                           pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx)
                 else:
                     data_tests[i] = data_reader.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i], normalize_digits=args.normalize_digits, symbolic_root=True,
@@ -1411,8 +1415,8 @@ def parse(args):
     else:
         if alg == 'graph':
             if pretrained_lm =="sroberta":
-                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                      pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+                data_test = conllu_data.read_bucketed_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                      pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
             else:
                 data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
@@ -1431,7 +1435,7 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'mask_pred.txt')
+        pred_filename = os.path.join(args.logpath, 'pred_train.txt')
     pred_writer.start(pred_filename)
     # gold_filename = os.path.join(result_path, 'gold.txt')
     # gold_writer.start(gold_filename)
@@ -1444,7 +1448,7 @@ def parse(args):
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, args.beam, batch_size=args.eval_batch_size, tokenizer=tokenizer,
-             multi_lan_iter=multi_lan_iter, ensemble=False,target_mask=target_type_mask)
+             multi_lan_iter=multi_lan_iter, ensemble=False,target_mask=target_type_mask,is_pattern=True,is_par=True,is_node=True)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()  # gold_writer.close()
@@ -1519,6 +1523,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--is_node', action='store_true', default=False)
     args_parser.add_argument('--is_par', action='store_true', default=False)
     args_parser.add_argument('--is_pattern', action='store_true', default=False)
+    args_parser.add_argument('--logpath', type=str,default="none")
 
     # feature2
 
