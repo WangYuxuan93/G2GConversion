@@ -1347,7 +1347,7 @@ def parse(args):
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
     logger.info("loading network...")
-    hyps = json.load(open(os.path.join(args.save, 'config.json'), 'r'))
+    hyps = json.load(open(os.path.join(args.model_path, 'config.json'), 'r'))
     model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
 
