@@ -616,8 +616,11 @@ def read_bucketed_data_sdp(source_path: str, word_alphabet: Alphabet, char_alpha
             # heads,type ids
             for h, hid in enumerate(hids):
                 for kk, x in enumerate(hid):
-                    hid_inputs[i, h, x] = 1
-                    tid_inputs[i, h, x] = tids[h][kk]
+                    try:
+                        hid_inputs[i, h, x] = 1
+                        tid_inputs[i, h, x] = tids[h][kk]
+                    except:
+                        print(wids)
                 hid_inputs[i, h, inst_size:] = PAD_ID_TAG
                 tid_inputs[i, h, inst_size:] = PAD_ID_TAG
             # masks
