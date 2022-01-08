@@ -531,7 +531,10 @@ def train(args):
         if test_path == "none":
             data_paths = [dev_path]
         else:
-            data_paths = [dev_path, test_path]
+            if dev_path !="none":
+                data_paths = [dev_path, test_path]
+            else:
+                data_paths = [test_path]
         for x in plus_path:
             if x != 'none':
                 data_paths.append(x)  # data_paths=[dev_path]
@@ -753,13 +756,19 @@ def train(args):
             data_train = conllu_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
             logger.info("Reading dev Data")
-            data_dev = conllu_data.read_bucketed_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            if dev_path !="none":
+                data_dev = conllu_data.read_bucketed_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                              pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,old_labels=rel_alphabet_source)
+            else:
+                data_dev =None
         else:
             data_train = data_reader.read_bucketed_data_sdp(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                             pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-            data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            if dev_path !="none":
+                data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                  pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+            else:
+                data_dev =None
         logger.info("不读取data_test")
         data_test =None
         # if test_path == "none":
@@ -1080,116 +1089,122 @@ def train(args):
                     logger.info("模型训练过短，不进行dev集验证，跳过")
                     continue
                 # evaluate performance on dev data
-                with torch.no_grad():
-                    pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
-                    # pred_writer.start(pred_filename)
-                    # gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
-                    # gold_writer.start(gold_filename)
+                if dev_path !="none":
+                    with torch.no_grad():
+                        pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
+                        # pred_writer.start(pred_filename)
+                        # gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+                        # gold_writer.start(gold_filename)
 
-                    logger.info('Start evaluating dev:')
-                    dev_stats, dev_stats_nopunct, dev_stats_root, f1_score = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                        batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=best_type_f,is_node=is_node,
-                                                                                  is_par=is_par,is_pattern=is_pattern)
-                    logger.info('End evaluating dev')
-                    # pred_writer.close()
-                    # gold_writer.close()
+                        logger.info('Start evaluating dev:')
+                        dev_stats, dev_stats_nopunct, dev_stats_root, f1_score = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
+                            batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=best_type_f,is_node=is_node,
+                                                                                      is_par=is_par,is_pattern=is_pattern)
+                        logger.info('End evaluating dev')
+                        # pred_writer.close()
+                        # gold_writer.close()
 
-                    dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
-                    dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
-                    dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
-                    type_f = f1_score[1]
+                        dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
+                        dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
+                        dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
+                        type_f = f1_score[1]
 
-                    if best_type_f < type_f:
-                        num_epochs_without_improvement = 0
-                        best_ucorrect_nopunc = dev_ucorr_nopunc
-                        best_lcorrect_nopunc = dev_lcorr_nopunc
-                        best_ucomlpete_nopunc = dev_ucomlpete_nopunc
-                        best_lcomplete_nopunc = dev_lcomplete_nopunc
-                        best_type_f = type_f
+                        if best_type_f < type_f:
+                            num_epochs_without_improvement = 0
+                            best_ucorrect_nopunc = dev_ucorr_nopunc
+                            best_lcorrect_nopunc = dev_lcorr_nopunc
+                            best_ucomlpete_nopunc = dev_ucomlpete_nopunc
+                            best_lcomplete_nopunc = dev_lcomplete_nopunc
+                            best_type_f = type_f
 
-                        best_ucorrect = dev_ucorr
-                        best_lcorrect = dev_lcorr
-                        best_ucomlpete = dev_ucomlpete
-                        best_lcomplete = dev_lcomplete
+                            best_ucorrect = dev_ucorr
+                            best_lcorrect = dev_lcorr
+                            best_ucomlpete = dev_ucomlpete
+                            best_lcomplete = dev_lcomplete
 
-                        best_root_correct = dev_root_corr
-                        best_total = dev_total
-                        best_total_nopunc = dev_total_nopunc
-                        best_total_root = dev_total_root
-                        best_total_inst = dev_total_inst
+                            best_root_correct = dev_root_corr
+                            best_total = dev_total
+                            best_total_nopunc = dev_total_nopunc
+                            best_total_root = dev_total_root
+                            best_total_inst = dev_total_inst
 
-                        best_epoch = epoch
-                        # =============================== f1 =================
-                        best_arc_eval_f = f1_score[0]
-                        best_type_eval_f = f1_score[1]
-                        best_arc_eval_p = f1_score[2]
-                        best_arc_eval_r = f1_score[3]
-                        best_type_eval_p = f1_score[4]
-                        best_type_eval_r = f1_score[5]
-
-
-                        # ======================================================
-                        patient = 0
-                        torch.save({'state_dict': single_network.state_dict(), "optimizer": optimizer.state_dict()}, model_name)
-                        # torch.save(single_network.state_dict(), model_name)
-
-                        # torch.save(single_network.lm_encoder.state_dict(),roberta_path+f'{epoch}')
-
-                        pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
-                        pred_writer.start(pred_filename)
-                        gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
-                        gold_writer.start(gold_filename)
+                            best_epoch = epoch
+                            # =============================== f1 =================
+                            best_arc_eval_f = f1_score[0]
+                            best_type_eval_f = f1_score[1]
+                            best_arc_eval_p = f1_score[2]
+                            best_arc_eval_r = f1_score[3]
+                            best_type_eval_p = f1_score[4]
+                            best_type_eval_r = f1_score[5]
 
 
+                            # ======================================================
+                            patient = 0
+                            torch.save({'state_dict': single_network.state_dict(), "optimizer": optimizer.state_dict()}, model_name)
+                            # torch.save(single_network.state_dict(), model_name)
 
-                        if data_test:
-                            logger.info('Start evaluating test:')
-                            test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
-                                beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
-                                is_node=is_node, is_par = is_par, is_pattern = is_pattern)
+                            # torch.save(single_network.lm_encoder.state_dict(),roberta_path+f'{epoch}')
 
-                            test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
-                            test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
-                            test_root_correct, test_total_root, test_total_inst = test_stats_root
-                            test_arc_f = f1_score[0]
-                            test_type_f = f1_score[1]
-                            test_arc_p = f1_score[2]
-                            test_arc_r = f1_score[3]
-                            test_type_p = f1_score[4]
-                            test_type_r = f1_score[5]
+                            pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
+                            pred_writer.start(pred_filename)
+                            gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
+                            gold_writer.start(gold_filename)
 
-                            pred_writer.close()
-                        logger.info('End evaluating test:')
-                        gold_writer.close()
-                    else:
-                        patient += 1
 
-                    print('=' * 125)
-                    print("         (epoch: %d)\n          " % best_epoch)
-                    print('best dev')
-                    print("UP:%.4f  LP:%.4f\n"
-                          "UR:%.4f  LR:%.4f\n"
-                          "UF:%.4f  LF:%.4f\n" % (best_arc_eval_p, best_type_eval_p, best_arc_eval_r, best_type_eval_r, best_arc_eval_f, best_type_eval_f,))
-                    print("     best dev             best test\n")
-                    print("UP:%.4f  LP:%.4f||||UP:%.4f  LP:%.4f\n"
-                          "UR:%.4f  LR:%.4f||||UR:%.4f  LR:%.4f\n"
-                          "UF:%.4f  LF:%.4f||||UF:%.4f  LF:%.4f\n" % (
-                          best_arc_eval_p, best_type_eval_p, test_arc_p, test_type_p, best_arc_eval_r, best_type_eval_r, test_arc_r, test_type_r, best_arc_eval_f, best_type_eval_f, test_arc_f,
-                          test_type_f))
 
-                    if reset > 0 and patient >= reset:
-                        print("### Reset optimizer state ###")
-                        pre_dict = torch.load(model_name, map_location=device)
-                        try:
-                            single_network.load_state_dict(torch.load(model_name, map_location=device))
-                        except:
+                            if data_test:
+                                logger.info('Start evaluating test:')
+                                test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                                    beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0,
+                                    is_node=is_node, is_par = is_par, is_pattern = is_pattern)
+
+                                test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                                test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                                test_root_correct, test_total_root, test_total_inst = test_stats_root
+                                test_arc_f = f1_score[0]
+                                test_type_f = f1_score[1]
+                                test_arc_p = f1_score[2]
+                                test_arc_r = f1_score[3]
+                                test_type_p = f1_score[4]
+                                test_type_r = f1_score[5]
+
+                                pred_writer.close()
+                            logger.info('End evaluating test:')
+                            gold_writer.close()
+                        else:
+                            patient += 1
+
+                        print('=' * 125)
+                        print("         (epoch: %d)\n          " % best_epoch)
+                        print('best dev')
+                        print("UP:%.4f  LP:%.4f\n"
+                              "UR:%.4f  LR:%.4f\n"
+                              "UF:%.4f  LF:%.4f\n" % (best_arc_eval_p, best_type_eval_p, best_arc_eval_r, best_type_eval_r, best_arc_eval_f, best_type_eval_f,))
+                        print("     best dev             best test\n")
+                        print("UP:%.4f  LP:%.4f||||UP:%.4f  LP:%.4f\n"
+                              "UR:%.4f  LR:%.4f||||UR:%.4f  LR:%.4f\n"
+                              "UF:%.4f  LF:%.4f||||UF:%.4f  LF:%.4f\n" % (
+                              best_arc_eval_p, best_type_eval_p, test_arc_p, test_type_p, best_arc_eval_r, best_type_eval_r, test_arc_r, test_type_r, best_arc_eval_f, best_type_eval_f, test_arc_f,
+                              test_type_f))
+
+                        if reset > 0 and patient >= reset:
+                            print("### Reset optimizer state ###")
                             pre_dict = torch.load(model_name, map_location=device)
-                            single_network.load_state_dict(pre_dict['state_dict'])
-                            logger.info("加载的模型保存了optimizer")  # 不需要初始化optimizer
-                        scheduler.reset_state()
-                        patient = 0
+                            try:
+                                single_network.load_state_dict(torch.load(model_name, map_location=device))
+                            except:
+                                pre_dict = torch.load(model_name, map_location=device)
+                                single_network.load_state_dict(pre_dict['state_dict'])
+                                logger.info("加载的模型保存了optimizer")  # 不需要初始化optimizer
+                            scheduler.reset_state()
+                            patient = 0
+                else:
+                    logger.info("zhilin: 没有data_dev,跳过")
 
-            if num_epochs_without_improvement >= patient_epochs:
+            if (dev_path =="none" and epoch==300) or (dev_path !="none" and num_epochs_without_improvement >= patient_epochs):
+                if dev_path =="none":
+                    pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
+                    pred_writer.start(pred_filename)
                 logger.info('Start evaluating test:')
                 logger.info("先清除train和dev")
                 del data_train
