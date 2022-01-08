@@ -1203,6 +1203,8 @@ def train(args):
 
             if (dev_path =="none" and epoch==300) or (dev_path !="none" and num_epochs_without_improvement >= patient_epochs):
                 if dev_path =="none":
+                    torch.save({'state_dict': single_network.state_dict(), "optimizer": optimizer.state_dict()}, model_name)
+                    logger.info("zhilin: 保存模型")
                     pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                     pred_writer.start(pred_filename)
                 logger.info('Start evaluating test:')
