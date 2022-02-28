@@ -349,9 +349,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             masks = data['MASK'].to(device)
             # err_types = data['ERR_TYPE']
             err_types = None
-            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
+            try:
+                heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
                                                    leading_symbolic=common.NUM_SYMBOLIC_TAGS, target_mask=target_mask,
                                                    src_heads=src_heads, src_types=src_types,_src_heads=_src_heads,_src_types=_src_types,method=method)
+            except:
+                print(words)
+                print(srcs)
+                exit(0)
         else:
             pres = None
             err_types = None

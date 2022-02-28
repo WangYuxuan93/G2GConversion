@@ -52,7 +52,7 @@ class CoNLLUReaderG2G(object):
             if line.startswith('#'):
                 line = self.__source_file.readline()
                 continue
-            items = line.split()
+            items = line.split("\t")
             if re.match('[0-9]+[-.][0-9]+', items[0]):
                 line = self.__source_file.readline()
                 continue
@@ -121,8 +121,11 @@ class CoNLLUReaderG2G(object):
             for x in tokens[8].split("|"):
                 if x != '_':
                     p = x.split(":", 1)
-                    headlist.append(int(p[0]))
-                    typelist.append(p[1])
+                    try:
+                        headlist.append(int(p[0]))
+                        typelist.append(p[1])
+                    except:
+                        print(line)
             heads.append(headlist)
             types.append(typelist)
             #  exception:
@@ -167,10 +170,14 @@ class CoNLLUReaderG2G(object):
                     temp_type = self.__old_alphabet.get_index(type)
                     src_temp.append(temp_type)
                 except:
-                    temp_type = self.__old_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
+                    try:
+                        temp_type = self.__old_alphabet.get_index(type+"=")
+                        print("type加上等=")
+                    except:
+                        temp_type = self.__old_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
                     # temp_type = self.__type_alphabet.next_index
                     # self.__type_alphabet.next_index +=1
-                    print("【ERROR arc_type:%s】" % type)
+                        print("【ERROR arc_type:%s】" % type)
                     src_temp.append(temp_type)
             src_type_ids.append(src_temp)
             # save original word in words (data['SRC']), to recover this for normalize_digits=True
