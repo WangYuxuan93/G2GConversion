@@ -52,7 +52,7 @@ class CoNLLUReaderG2G(object):
             if line.startswith('#'):
                 line = self.__source_file.readline()
                 continue
-            items = line.split()
+            items = line.split("\t")
             if re.match('[0-9]+[-.][0-9]+', items[0]):
                 line = self.__source_file.readline()
                 continue
