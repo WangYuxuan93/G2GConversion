@@ -254,10 +254,10 @@ class CharCNN(nn.Module):
         # [batch, sent_length, out_channels]
         return char.view(char_size[0], char_size[1], -1)
 
-class BiAffine_transfer(BiAffine_v2):
+class BiAffine_transfer_rel(BiAffine_v2):
 
     def __init__(self, n_in, n_out_old=1, n_out_new=1, bias_x=True, bias_y=True):
-        super(BiAffine_transfer, self).__init__(n_in,n_out_old,bias_x,bias_y)
+        super(BiAffine_transfer_rel, self).__init__(n_in,n_out_old,bias_x,bias_y)
 
 
         self.n_out_new = n_out_new
@@ -285,6 +285,41 @@ class BiAffine_transfer(BiAffine_v2):
         # s = torch.matmul(torch.matmul(x, self.weight), y.transpose(-1, -2))
         weight = self.weight.transpose(-1, -3) @ self.weight_new
         s = x @ weight.transpose(-1,-3) @ y.transpose(-1, -2)
+        # remove dim 1 if n_out == 1
+        s = s.squeeze(1)
+        return s
+
+class BiAffine_transfer_arc(BiAffine_v2):
+
+    def __init__(self, n_in, n_out_old=1, n_out_new=1, bias_x=True, bias_y=True):
+        super(BiAffine_transfer_arc, self).__init__(n_in,n_out_old,bias_x,bias_y)
+
+
+        self.n_out_new = n_out_new
+        self.weight_new = nn.Parameter(torch.Tensor(n_in+bias_y,
+                                               n_in+bias_y))
+        self.weight.requires_grad = False
+        self.reset_parameters_add()
+
+
+    def reset_parameters_add(self):
+        #nn.init.zeros_(self.weight)
+        nn.init.xavier_uniform_(self.weight_new)
+
+    @overrides
+    def forward(self, x, y):
+        if self.bias_x:
+            x = torch.cat([x, x.new_ones(x.shape[:-1]).unsqueeze(-1)], -1)
+        if self.bias_y:
+            y = torch.cat([y, y.new_ones(y.shape[:-1]).unsqueeze(-1)], -1)
+        # [batch_size, 1, seq_len, d]
+        x = x.unsqueeze(1)
+        # [batch_size, 1, seq_len, d]
+        y = y.unsqueeze(1)
+        # [batch_size, n_out, seq_len, seq_len]
+        # s = torch.matmul(torch.matmul(x, self.weight), y.transpose(-1, -2))
+        weight = self.weight @ self.weight_new
+        s = x @ weight @ y.transpose(-1, -2)
         # remove dim 1 if n_out == 1
         s = s.squeeze(1)
         return s

@@ -687,7 +687,20 @@ def train(args):
     if args.fine_tune:
         if args.pretrain_roberta != "none":
             logger.info("Loading roberta state dict!")
-            network.lm_encoder.load_state_dict(torch.load(args.pretrain_roberta, map_location=device))
+            # TSFT 加载全部参数，除了rel attention
+            # network.lm_encoder.load_state_dict(torch.load(args.pretrain_roberta, map_location=device))
+            update_new_dict = {}
+            new_dict = network.state_dict()
+            pre_dict = torch.load(os.path.join(args.pretrain_roberta,"model.pt"), map_location=device)
+            if len(pre_dict) == 2:
+                para_dict = pre_dict["state_dict"]
+            else:
+                para_dict = pre_dict
+            for k, v in para_dict.items():
+                if k in new_dict and k != "rel_attention.weight":
+                    update_new_dict[k] = v
+            new_dict.update(update_new_dict)
+            network.load_state_dict(new_dict)
         else:
             try:
                 network.load_state_dict(torch.load(os.path.join(pretrain,"model.pt"), map_location=device))
