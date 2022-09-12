@@ -1,2 +1,2 @@
 # g2g
-Graph 2 Graph transfering
+please refer to branch "linear-transfer" and "pattern"
